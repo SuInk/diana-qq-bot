@@ -1,0 +1,28 @@
+{
+  "providers": [
+    {
+      "name": "exa-free-primary",
+      "type": "exa_mcp",
+      "url": "https://mcp.exa.ai/mcp?tools=web_search_exa",
+      "tool": "web_search_exa",
+      "timeout_ms": 12000,
+      "max_results": 5
+    },
+    {
+      "name": "exa-free-advanced",
+      "type": "exa_mcp",
+      "url": "https://mcp.exa.ai/mcp?tools=web_search_advanced_exa",
+      "tool": "web_search_advanced_exa",
+      "timeout_ms": 15000,
+      "max_results": 5
+    },
+    {
+      "name": "tavily-free",
+      "type": "tavily",
+      "url": "https://api.tavily.com/search",
+      "api_key_env": "TAVILY_API_KEY",
+      "timeout_ms": 12000,
+      "max_results": 5
+    }
+  ]
+}

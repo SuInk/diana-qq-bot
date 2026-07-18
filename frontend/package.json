@@ -1,0 +1,24 @@
+{
+  "name": "diana-qq-bot-webui",
+  "private": true,
+  "license": "SEE LICENSE IN ../LICENSE",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build --configLoader runner",
+    "preview": "vite preview --host 127.0.0.1",
+    "verify:dev": "node scripts/verify-dev.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.21.0",
+    "element-plus": "^2.14.3",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vue-tsc": "^2.2.0"
+  }
+}

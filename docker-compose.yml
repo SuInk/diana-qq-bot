@@ -1,0 +1,33 @@
+services:
+  diana-qq-bot:
+    build: .
+    image: diana-qq-bot:latest
+    container_name: diana-qq-bot
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      HOST: "${HOST:-0.0.0.0}"
+      PORT: "${PORT:-18080}"
+      LOG_PATH: "${LOG_PATH:-/app/logs/diana-qq-bot.log}"
+      DIANA_ADMIN_TOKEN: "${DIANA_ADMIN_TOKEN:?set DIANA_ADMIN_TOKEN to a random value with at least 32 characters}"
+      DIANA_ADMIN_LOGIN_PATH: "${DIANA_ADMIN_LOGIN_PATH:-}"
+      DIANA_NAPCAT_WEBUI_URL: "${DIANA_NAPCAT_WEBUI_URL:-}"
+      DIANA_NAPCAT_WEBUI_TOKEN: "${DIANA_NAPCAT_WEBUI_TOKEN:-}"
+      QQBOT_ENABLED: "${QQBOT_ENABLED:-false}"
+      ONEBOT_REVERSE_WS_ENDPOINT: "${ONEBOT_REVERSE_WS_ENDPOINT:-ws://127.0.0.1:18080/onebot/v11/ws}"
+      ONEBOT_ACCESS_TOKEN: "${ONEBOT_ACCESS_TOKEN:-}"
+      NONEBOT_BRIDGE_ENABLED: "${NONEBOT_BRIDGE_ENABLED:-false}"
+      NONEBOT_BRIDGE_ENDPOINT: "${NONEBOT_BRIDGE_ENDPOINT:-ws://127.0.0.1:8080/onebot/v11/ws}"
+      NONEBOT_BRIDGE_TOKEN: "${NONEBOT_BRIDGE_TOKEN:-}"
+      QQBOT_QQ: "${QQBOT_QQ:-}"
+      DIANA_OWNER_ID: "${DIANA_OWNER_ID:-}"
+      DIANA_GROUP_TRIGGERS: "${DIANA_GROUP_TRIGGERS:-Diana,diana}"
+      LLM_PROVIDER: "${LLM_PROVIDER:-openai_compatible}"
+      LLM_API_KEY: "${LLM_API_KEY:-}"
+      LLM_BASE_URL: "${LLM_BASE_URL:-}"
+      LLM_API_FORMAT: "${LLM_API_FORMAT:-responses}"
+      LLM_MODEL: "${LLM_MODEL:-gpt-4o-mini}"
+      LLM_USER_AGENT: "${LLM_USER_AGENT:-diana-qq-bot}"
