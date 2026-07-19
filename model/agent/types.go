@@ -9,20 +9,26 @@ import (
 )
 
 const (
-	DefaultMaxSteps            = 8
-	DefaultMaxToolOutputChars  = 8000
-	DefaultReadFileMaxBytes    = 64 * 1024
-	DefaultListDirectoryLimit  = 200
-	DefaultSkillsListBudget    = 8000
-	DefaultMCPStartupTimeoutMS = 10_000
-	DefaultMCPToolTimeoutMS    = 60_000
-	DefaultCommandTimeoutMS    = 10_000
-	DefaultBrowserTimeoutMS    = 15_000
-	MaxAllowedSteps            = 8
-	MaxAllowedToolOutputChars  = 20000
-	MaxAllowedReadFileMaxBytes = 512 * 1024
-	MaxAllowedCommandTimeoutMS = 60_000
-	MaxAllowedBrowserTimeoutMS = 60_000
+	DefaultMaxSteps                 = 8
+	DefaultMaxToolOutputChars       = 8000
+	DefaultReadFileMaxBytes         = 64 * 1024
+	DefaultListDirectoryLimit       = 200
+	DefaultSkillsListBudget         = 8000
+	DefaultMCPStartupTimeoutMS      = 10_000
+	DefaultMCPToolTimeoutMS         = 60_000
+	DefaultCommandTimeoutMS         = 10_000
+	DefaultBrowserTimeoutMS         = 15_000
+	DefaultToolTimeoutMS            = 60_000
+	DefaultFinalizationReserveMS    = 20_000
+	DefaultProtocolRepairLimit      = 3
+	MaxAllowedSteps                 = 8
+	MaxAllowedToolOutputChars       = 20000
+	MaxAllowedReadFileMaxBytes      = 512 * 1024
+	MaxAllowedCommandTimeoutMS      = 60_000
+	MaxAllowedBrowserTimeoutMS      = 60_000
+	MaxAllowedToolTimeoutMS         = 120_000
+	MaxAllowedFinalizationReserveMS = 60_000
+	MaxAllowedProtocolRepairLimit   = 6
 )
 
 type LLMClient interface {
@@ -30,40 +36,83 @@ type LLMClient interface {
 }
 
 type Config struct {
-	WorkDir             string
-	MaxSteps            int
-	MaxToolOutputChars  int
-	ReadFileMaxBytes    int
-	ListDirectoryLimit  int
-	SkillRoots          []string
-	SkillsListBudget    int
-	MCPConfigPath       string
-	MCPStartupTimeoutMS int
-	MCPToolTimeoutMS    int
-	CommandAllowlist    []string
-	CommandTimeoutMS    int
-	BrowserCDPURL       string
-	BrowserTimeoutMS    int
+	WorkDir               string
+	MaxSteps              int
+	MaxToolOutputChars    int
+	ReadFileMaxBytes      int
+	ListDirectoryLimit    int
+	SkillRoots            []string
+	SkillsListBudget      int
+	MCPConfigPath         string
+	MCPStartupTimeoutMS   int
+	MCPToolTimeoutMS      int
+	CommandAllowlist      []string
+	CommandTimeoutMS      int
+	BrowserCDPURL         string
+	BrowserTimeoutMS      int
+	ToolTimeoutMS         int
+	FinalizationReserveMS int
+	ProtocolRepairLimit   int
 }
 
 type Request struct {
 	Messages []llm.Message
+	TraceID  string
+	Observer RunObserver
 }
 
 type Response struct {
-	Text     string       `json:"text"`
-	Steps    []Step       `json:"steps,omitempty"`
-	Provider llm.Provider `json:"provider,omitempty"`
-	Model    string       `json:"model,omitempty"`
-	Usage    llm.Usage    `json:"usage,omitempty"`
+	Text         string       `json:"text"`
+	Steps        []Step       `json:"steps,omitempty"`
+	Provider     llm.Provider `json:"provider,omitempty"`
+	Model        string       `json:"model,omitempty"`
+	Usage        llm.Usage    `json:"usage,omitempty"`
+	TraceID      string       `json:"trace_id,omitempty"`
+	ModelTurns   int          `json:"model_turns,omitempty"`
+	FinishReason string       `json:"finish_reason,omitempty"`
+	DurationMS   int64        `json:"duration_ms,omitempty"`
 }
 
 type Step struct {
-	Tool   string         `json:"tool"`
-	Input  map[string]any `json:"input,omitempty"`
-	Output string         `json:"output,omitempty"`
-	Error  string         `json:"error,omitempty"`
+	Index      int            `json:"index,omitempty"`
+	Tool       string         `json:"tool"`
+	Input      map[string]any `json:"input,omitempty"`
+	Output     string         `json:"output,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	Skipped    bool           `json:"skipped,omitempty"`
+	DurationMS int64          `json:"duration_ms,omitempty"`
 }
+
+type RunPhase string
+
+const (
+	RunPhaseStarted        RunPhase = "started"
+	RunPhaseModelCompleted RunPhase = "model_completed"
+	RunPhaseProtocolRepair RunPhase = "protocol_repair"
+	RunPhaseToolStarted    RunPhase = "tool_started"
+	RunPhaseToolCompleted  RunPhase = "tool_completed"
+	RunPhaseCompleted      RunPhase = "completed"
+	RunPhaseFailed         RunPhase = "failed"
+)
+
+// RunEvent is a privacy-safe lifecycle event emitted by the Agent harness.
+// It intentionally exposes input keys and sizes, never raw prompts or tool data.
+type RunEvent struct {
+	TraceID      string
+	Phase        RunPhase
+	ModelTurn    int
+	ToolCall     int
+	MaxToolCalls int
+	Tool         string
+	InputKeys    []string
+	OutputChars  int
+	DurationMS   int64
+	Error        string
+	FinishReason string
+	Usage        llm.Usage
+}
+
+type RunObserver func(context.Context, RunEvent)
 
 // WithDefaults 补齐 Agent 配置默认值并限制上限。
 func (cfg Config) WithDefaults() Config {
@@ -118,6 +167,24 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if cfg.BrowserTimeoutMS > MaxAllowedBrowserTimeoutMS {
 		cfg.BrowserTimeoutMS = MaxAllowedBrowserTimeoutMS
+	}
+	if cfg.ToolTimeoutMS <= 0 {
+		cfg.ToolTimeoutMS = DefaultToolTimeoutMS
+	}
+	if cfg.ToolTimeoutMS > MaxAllowedToolTimeoutMS {
+		cfg.ToolTimeoutMS = MaxAllowedToolTimeoutMS
+	}
+	if cfg.FinalizationReserveMS <= 0 {
+		cfg.FinalizationReserveMS = DefaultFinalizationReserveMS
+	}
+	if cfg.FinalizationReserveMS > MaxAllowedFinalizationReserveMS {
+		cfg.FinalizationReserveMS = MaxAllowedFinalizationReserveMS
+	}
+	if cfg.ProtocolRepairLimit <= 0 {
+		cfg.ProtocolRepairLimit = DefaultProtocolRepairLimit
+	}
+	if cfg.ProtocolRepairLimit > MaxAllowedProtocolRepairLimit {
+		cfg.ProtocolRepairLimit = MaxAllowedProtocolRepairLimit
 	}
 	if strings.TrimSpace(cfg.BrowserCDPURL) == "" {
 		cfg.BrowserCDPURL = "http://127.0.0.1:9222"

@@ -199,7 +199,7 @@ func TestRunnerDoesNotExecuteToolRequestedDuringFinalization(t *testing.T) {
 	if len(resp.Steps) != 1 {
 		t.Fatalf("finalization executed another tool: %#v", resp.Steps)
 	}
-	if !strings.Contains(resp.Text, "收尾阶段仍错误地请求工具") {
+	if !strings.Contains(resp.Text, "已经执行过的操作不会重复执行") {
 		t.Fatalf("Text = %q", resp.Text)
 	}
 }
@@ -315,6 +315,100 @@ func TestRunnerEnforcesPerRunWebSearchLimit(t *testing.T) {
 	}
 }
 
+func TestRunnerProtocolRepairDoesNotConsumeToolBudget(t *testing.T) {
+	tool := &countingTool{name: "demo"}
+	client := &scriptedClient{responses: []string{
+		`{"action":"none"}`,
+		`{"action":"tool","tool":"demo","input":{"value":"ok"}}`,
+		`{"action":"final","content":"done"}`,
+	}}
+	runner, err := NewRunner(client, Config{WorkDir: t.TempDir(), MaxSteps: 1}, NewToolRegistry(tool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := runner.Run(context.Background(), Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "执行"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tool.calls != 1 || len(resp.Steps) != 1 || resp.Steps[0].Skipped {
+		t.Fatalf("tool calls=%d steps=%#v", tool.calls, resp.Steps)
+	}
+	if resp.Text != "done" || resp.ModelTurns != 3 || resp.FinishReason != "tool_budget_exhausted" {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestRunnerSkipsConsecutiveDuplicateToolCall(t *testing.T) {
+	tool := &countingTool{name: "demo"}
+	client := &scriptedClient{responses: []string{
+		`{"action":"tool","tool":"demo","input":{"value":"same"}}`,
+		`{"action":"tool","tool":"demo","input":{"value":"same"}}`,
+		`{"action":"final","content":"used the first result"}`,
+	}}
+	var events []RunEvent
+	runner, err := NewRunner(client, Config{WorkDir: t.TempDir(), MaxSteps: 2}, NewToolRegistry(tool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := runner.Run(context.Background(), Request{
+		Messages: []llm.Message{{Role: llm.RoleUser, Content: "执行"}},
+		TraceID:  "trace-test",
+		Observer: func(_ context.Context, event RunEvent) { events = append(events, event) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tool.calls != 1 || len(resp.Steps) != 2 || !resp.Steps[1].Skipped {
+		t.Fatalf("tool calls=%d steps=%#v", tool.calls, resp.Steps)
+	}
+	if resp.TraceID != "trace-test" || resp.Text != "used the first result" {
+		t.Fatalf("response = %#v", resp)
+	}
+	phases := make([]RunPhase, 0, len(events))
+	for _, event := range events {
+		if event.TraceID != "trace-test" {
+			t.Fatalf("event trace = %q", event.TraceID)
+		}
+		phases = append(phases, event.Phase)
+	}
+	for _, want := range []RunPhase{RunPhaseStarted, RunPhaseToolStarted, RunPhaseToolCompleted, RunPhaseProtocolRepair, RunPhaseCompleted} {
+		if !containsRunPhase(phases, want) {
+			t.Fatalf("phases=%#v, missing %q", phases, want)
+		}
+	}
+}
+
+func TestRunnerBoundsEveryToolCall(t *testing.T) {
+	tool := &blockingTool{}
+	client := &scriptedClient{responses: []string{
+		`{"action":"tool","tool":"blocking","input":{}}`,
+		`{"action":"final","content":"tool timed out"}`,
+	}}
+	runner, err := NewRunner(client, Config{WorkDir: t.TempDir(), MaxSteps: 1, ToolTimeoutMS: 10}, NewToolRegistry(tool))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := runner.Run(context.Background(), Request{Messages: []llm.Message{{Role: llm.RoleUser, Content: "执行"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Steps) != 1 || !strings.Contains(resp.Steps[0].Error, "工具执行超时") {
+		t.Fatalf("steps = %#v", resp.Steps)
+	}
+	if resp.Text != "tool timed out" {
+		t.Fatalf("Text = %q", resp.Text)
+	}
+}
+
+func containsRunPhase(phases []RunPhase, wanted RunPhase) bool {
+	for _, phase := range phases {
+		if phase == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 type scriptedClient struct {
 	responses []string
 	requests  []llm.GenerateRequest
@@ -327,12 +421,33 @@ type countingWebSearchTool struct {
 	lastInput map[string]any
 }
 
+type countingTool struct {
+	name  string
+	calls int
+}
+
+type blockingTool struct{}
+
 func (*countingWebSearchTool) Name() string        { return webSearchToolName }
 func (*countingWebSearchTool) Description() string { return "test web search tool" }
 func (t *countingWebSearchTool) Run(_ context.Context, input map[string]any) (string, error) {
 	t.calls++
 	t.lastInput = input
 	return `{"status":"ok"}`, nil
+}
+
+func (t *countingTool) Name() string      { return t.name }
+func (*countingTool) Description() string { return "test tool" }
+func (t *countingTool) Run(context.Context, map[string]any) (string, error) {
+	t.calls++
+	return `{"status":"ok"}`, nil
+}
+
+func (*blockingTool) Name() string        { return "blocking" }
+func (*blockingTool) Description() string { return "waits for context cancellation" }
+func (*blockingTool) Run(ctx context.Context, _ map[string]any) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
 }
 
 func (*terminalTestTool) Name() string        { return "terminal" }

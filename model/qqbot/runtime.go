@@ -1991,11 +1991,18 @@ func (r *Runtime) generateReply(ctx context.Context, cfg BotConfig, event Messag
 			if ownsRegistry {
 				defer agentRunner.Close()
 			}
-			resp, err := agentRunner.Run(ctx, agent.Request{Messages: messages})
+			traceID := strings.TrimSpace(event.MessageID)
+			if traceID != "" {
+				traceID = "qq-" + traceID
+			}
+			resp, err := agentRunner.Run(ctx, agent.Request{
+				Messages: messages,
+				TraceID:  traceID,
+				Observer: r.agentRunObserver(event),
+			})
 			if err != nil {
 				return "", err
 			}
-			r.recordAgentToolSteps(event, resp.Steps)
 			r.recordLLMUsage(ctx, event, resp.Provider, resp.Model, resp.Usage, "agent_reply")
 			return normalizeReplyPreservingControlIntent(resp.Text, cfg.MaxReplyChars), nil
 		}
