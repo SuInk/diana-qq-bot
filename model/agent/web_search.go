@@ -547,7 +547,7 @@ func (t *WebSearchTool) closeRemoteMCPSession(endpoint, apiKey, sessionID string
 	}
 	resp, err := t.httpClient().Do(req)
 	if err == nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 }
 

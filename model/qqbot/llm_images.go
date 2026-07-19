@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"diana-qq-bot/model/netguard"
 )
 
 const maxLLMImageBytes = 8 << 20
@@ -66,7 +68,7 @@ func downloadImageBytes(ctx context.Context, imageURL string) ([]byte, string, e
 	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := netguard.NewPublicHTTPClient(8 * time.Second).Do(req)
 	if err != nil {
 		return nil, "", err
 	}

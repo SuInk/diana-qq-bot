@@ -15,10 +15,10 @@ func TestLLMImageRouteConfigRoundTrip(t *testing.T) {
 		Model:          "gpt-test",
 		ImageModel:     "gpt-image-2",
 		ImageBaseURL:   "https://image.example.test/v1",
-		ImageOrigin:    "129.153.75.15:443",
+		ImageOrigin:    "203.0.113.10:443",
 		ImageTimeoutMS: 600000,
 	})
-	if cfg.ImageBaseURL != "https://image.example.test/v1" || cfg.ImageOrigin != "129.153.75.15:443" || cfg.ImageTimeout != 10*time.Minute {
+	if cfg.ImageBaseURL != "https://image.example.test/v1" || cfg.ImageOrigin != "203.0.113.10:443" || cfg.ImageTimeout != 10*time.Minute {
 		t.Fatalf("config = %#v", cfg)
 	}
 

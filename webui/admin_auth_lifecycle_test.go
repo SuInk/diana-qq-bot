@@ -102,6 +102,47 @@ func TestAdminAuthFirstRunJWTAndRefreshRotation(t *testing.T) {
 	}
 }
 
+func TestAdminAuthRemoteSetupRequiresBootstrapToken(t *testing.T) {
+	dir := t.TempDir()
+	auth, err := NewAdminAuth(AdminAuthConfig{
+		Token:          testAdminToken,
+		LoginPath:      "/secret-admin-entry",
+		CredentialPath: filepath.Join(dir, "admin-credentials.json"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := gin.New()
+	auth.Register(router)
+	payload := map[string]any{
+		"email":            testAdminEmail,
+		"password":         testAdminPassword,
+		"password_confirm": testAdminPassword,
+	}
+	request := func(token string) *httptest.ResponseRecorder {
+		body, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/setup", bytes.NewReader(body))
+		req.RemoteAddr = "192.0.2.10:54321"
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Diana-Login-Path", "/secret-admin-entry")
+		if token != "" {
+			req.Header.Set("X-Diana-Bootstrap-Token", token)
+		}
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+		return response
+	}
+	if response := request(""); response.Code != http.StatusForbidden {
+		t.Fatalf("remote setup without token = %d, want 403", response.Code)
+	}
+	if response := request(testAdminToken); response.Code != http.StatusOK {
+		t.Fatalf("remote setup with token = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestAdminAuthDeviceRevocationPasswordAndEmailChange(t *testing.T) {
 	fixture := newAdminAuthFixture(t, true, 5*time.Minute)
 	first := newAdminAuthClient(fixture.router)
@@ -278,6 +319,8 @@ func (c *adminAuthClient) request(t *testing.T, method, target string, payload a
 		body = bytes.NewReader(encoded)
 	}
 	request := httptest.NewRequest(method, target, body)
+	request.RemoteAddr = "127.0.0.1:43210"
+	request.Host = "127.0.0.1:18080"
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}

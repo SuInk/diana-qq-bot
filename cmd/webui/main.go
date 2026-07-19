@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"mime"
@@ -30,6 +31,8 @@ var (
 	buildSourceRoot string
 	buildCommit     string
 )
+
+const maxHTTPRequestBodyBytes = 8 << 20
 
 // main 初始化存储、路由、机器人运行时并启动 WebUI 服务。
 func main() {
@@ -157,16 +160,19 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
+	router.Use(limitRequestBody(maxHTTPRequestBodyBytes))
 	router.Use(gin.LoggerWithWriter(logWriter), gin.RecoveryWithWriter(logWriter))
 	if err := router.SetTrustedProxies(nil); err != nil {
 		log.Fatal(err)
 	}
+	secureAdminCookies := boolFromEnv("DIANA_ADMIN_SECURE_COOKIES", false)
 	adminAccess, err := webui.NewAdminAccess(webui.AdminAccessConfig{
 		Token:           envOrAny([]string{"DIANA_ADMIN_TOKEN", "ADMIN_TOKEN"}, ""),
 		Username:        envOrAny([]string{"DIANA_ADMIN_EMAIL", "DIANA_ADMIN_USERNAME"}, ""),
 		LoginPath:       os.Getenv("DIANA_ADMIN_LOGIN_PATH"),
 		SettingsPath:    envOr("DIANA_ADMIN_AUTH_CONFIG_FILE", filepath.Join(filepath.Dir(appDBPath), "admin-auth.json")),
 		CredentialsPath: envOr("DIANA_ADMIN_CREDENTIALS_FILE", filepath.Join(filepath.Dir(appDBPath), "admin-credentials.json")),
+		SecureCookies:   secureAdminCookies,
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -200,8 +206,25 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if !hostIsLoopback(host) && !secureAdminCookies {
+		log.Printf("SECURITY WARNING: WebUI is listening on a non-loopback address without Secure cookies; terminate TLS locally or set DIANA_ADMIN_SECURE_COOKIES=true behind HTTPS")
+	}
 	log.Printf("webui listening on http://%s:%s", displayHost(host), port)
-	if err := router.RunListener(listener); err != nil {
+	server := &http.Server{
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			log.Printf("webui shutdown failed: %v", shutdownErr)
+		}
+	}()
+	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
@@ -256,6 +279,30 @@ func displayHost(host string) string {
 	}
 }
 
+func hostIsLoopback(host string) bool {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func limitRequestBody(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body == nil || maxBytes <= 0 {
+			c.Next()
+			return
+		}
+		if c.Request.ContentLength > maxBytes {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": "request body is too large"})
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+		c.Next()
+	}
+}
+
 // setupLogging 配置控制台和文件日志输出。
 func setupLogging() (io.Writer, func()) {
 	logPath := envOrAny([]string{"LOG_PATH", "DIANA_LOG_PATH"}, "")
@@ -263,13 +310,18 @@ func setupLogging() (io.Writer, func()) {
 		return os.Stdout, func() {}
 	}
 	// Gin 请求日志和标准 log 共用同一个 writer，方便部署时只收集一个文件。
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		log.Printf("create log directory skipped: %v", err)
 		return os.Stdout, func() {}
 	}
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		log.Printf("open log file skipped: %v", err)
+		return os.Stdout, func() {}
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		log.Printf("secure log file skipped: %v", err)
 		return os.Stdout, func() {}
 	}
 	writer := io.MultiWriter(os.Stdout, file)

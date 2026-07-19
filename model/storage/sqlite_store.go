@@ -39,8 +39,33 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	if path == "" {
 		path = defaultDatabasePath
 	}
-	// 数据库目录可能不存在，先创建目录再打开 SQLite 文件。
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// The database contains provider keys, bot tokens, and private message data.
+	// Create it before SQLite opens the path so it is never briefly world-readable.
+	dir := filepath.Dir(path)
+	_, dirErr := os.Stat(dir)
+	dirCreated := errors.Is(dirErr, os.ErrNotExist)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	if dirCreated && dir != "." {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return nil, err
+		}
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.New("sqlite database path must not be a symlink")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open("sqlite", path)
@@ -63,6 +88,12 @@ PRAGMA foreign_keys = ON;
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	for _, databaseFile := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(databaseFile, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 	return store, nil
 }

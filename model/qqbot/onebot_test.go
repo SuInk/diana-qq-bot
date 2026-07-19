@@ -2,6 +2,7 @@ package qqbot
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -253,5 +254,40 @@ func TestReverseServerStaleReadLoopCannotDisconnectReplacement(t *testing.T) {
 	status := server.Status()
 	if server.conn != nil || status.Connected || status.LastError != "current connection closed" {
 		t.Fatalf("current disconnect status = %#v", status)
+	}
+}
+
+func TestReverseServerRequiresAccessToken(t *testing.T) {
+	server := NewOneBotReverseServer(OneBotConfig{})
+	request := httptest.NewRequest("GET", "http://localhost/onebot/v11/ws", nil)
+	if server.authorized(request) {
+		t.Fatal("empty OneBot token must not authorize a connection")
+	}
+
+	server.SetConfig(OneBotConfig{AccessToken: "0123456789abcdef"})
+	request.Header.Set("Authorization", "Bearer 0123456789abcdef")
+	if !server.authorized(request) {
+		t.Fatal("matching bearer token was rejected")
+	}
+	request.Header.Set("Authorization", "Bearer wrong")
+	request.URL.RawQuery = "access_token=0123456789abcdef"
+	if !server.authorized(request) {
+		t.Fatal("matching query token was rejected")
+	}
+}
+
+func TestReverseServerRejectsCrossOriginBrowser(t *testing.T) {
+	request := httptest.NewRequest("GET", "http://bot.example/onebot/v11/ws", nil)
+	request.Host = "bot.example"
+	if !sameOriginWebSocketRequest(request) {
+		t.Fatal("origin-less NapCat request was rejected")
+	}
+	request.Header.Set("Origin", "https://attacker.example")
+	if sameOriginWebSocketRequest(request) {
+		t.Fatal("cross-origin browser WebSocket was accepted")
+	}
+	request.Header.Set("Origin", "http://bot.example")
+	if !sameOriginWebSocketRequest(request) {
+		t.Fatal("same-origin browser WebSocket was rejected")
 	}
 }

@@ -72,8 +72,12 @@ func TestAdminAuthLoginSessionAndLogout(t *testing.T) {
 	auth, router := newAdminAuthTestRouter(t, time.Hour)
 
 	status := performRequest(router, http.MethodGet, "/api/auth/status?path=/ordinary-path", nil, nil)
-	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), auth.LoginPath()) {
-		t.Fatalf("status did not return login path or failed: code=%d body=%s", status.Code, status.Body.String())
+	if status.Code != http.StatusOK || strings.Contains(status.Body.String(), auth.LoginPath()) {
+		t.Fatalf("status leaked login path or failed: code=%d body=%s", status.Code, status.Body.String())
+	}
+	loginStatus := performRequest(router, http.MethodGet, "/api/auth/status?path="+auth.LoginPath(), nil, nil)
+	if loginStatus.Code != http.StatusOK || !strings.Contains(loginStatus.Body.String(), auth.LoginPath()) {
+		t.Fatalf("login page status did not identify itself: code=%d body=%s", loginStatus.Code, loginStatus.Body.String())
 	}
 	assertStatus(t, router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"token":"`+testAdminToken+`"}`), nil, http.StatusNotFound)
 
@@ -102,6 +106,20 @@ func TestAdminAuthLoginSessionAndLogout(t *testing.T) {
 		t.Fatalf("logout failed: code=%d body=%s", logout.Code, logout.Body.String())
 	}
 	assertStatus(t, router, http.MethodGet, "/api/private", nil, map[string]string{"Cookie": sessionCookie.String()}, http.StatusUnauthorized)
+}
+
+func TestRequestIsDirectLoopbackRejectsLocalReverseProxy(t *testing.T) {
+	direct := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/api/auth/setup", nil)
+	direct.RemoteAddr = "127.0.0.1:43210"
+	if !requestIsDirectLoopback(direct) {
+		t.Fatal("direct loopback request was rejected")
+	}
+
+	proxied := httptest.NewRequest(http.MethodPost, "https://bot.example/api/auth/setup", nil)
+	proxied.RemoteAddr = "127.0.0.1:43210"
+	if requestIsDirectLoopback(proxied) {
+		t.Fatal("public request from a local reverse proxy was accepted as direct loopback")
+	}
 }
 
 func TestAdminAuthSessionExpiryAndRateLimit(t *testing.T) {

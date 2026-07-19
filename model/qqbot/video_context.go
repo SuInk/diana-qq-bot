@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"diana-qq-bot/model/netguard"
 )
 
 const (
@@ -126,7 +128,7 @@ func downloadVideoContextSource(ctx context.Context, source string) (string, str
 		return cleanup(err)
 	}
 	req.Header.Set("User-Agent", "DianaQQBot/0.1")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := netguard.NewPublicHTTPClient(30 * time.Second).Do(req)
 	if err != nil {
 		return cleanup(err)
 	}

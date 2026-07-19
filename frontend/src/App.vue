@@ -766,7 +766,7 @@
 
                       <label v-if="llmForm.provider === 'openai_compatible'" class="field span-all">
                         <span>生图直连地址</span>
-                        <input v-model.trim="llmForm.imageOrigin" autocomplete="off" placeholder="例如：129.153.75.15:443" />
+                        <input v-model.trim="llmForm.imageOrigin" autocomplete="off" placeholder="例如：203.0.113.10:443" />
                       </label>
 
                       <label v-if="llmForm.provider === 'openai_compatible'" class="field span-all">
@@ -1457,7 +1457,7 @@
             </label>
             <label class="bot-detail-row">
               <span>命令白名单</span>
-              <input v-model.trim="botForm.agentCommandAllowlist" autocomplete="off" placeholder="留空使用默认；逗号分隔" />
+              <input v-model.trim="botForm.agentCommandAllowlist" autocomplete="off" placeholder="留空禁用命令执行；逗号分隔" />
             </label>
             <label class="bot-detail-row">
               <span>命令超时 MS</span>

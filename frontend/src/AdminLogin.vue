@@ -69,6 +69,17 @@
           </div>
         </label>
 
+        <label v-if="setupRequired" class="admin-token-field">
+          <span>初始令牌</span>
+          <div class="admin-token-input">
+            <input
+              v-model="bootstrapToken"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="off"
+            />
+          </div>
+        </label>
+
         <p v-if="error" id="admin-login-error" class="admin-login-error" role="alert">{{ error }}</p>
 
         <button class="admin-login-submit" type="submit" :disabled="submitDisabled">
@@ -89,6 +100,7 @@ import { getAdminAuthStatus, loginAdmin, rememberAdminLoginPath, setupAdmin } fr
 const email = ref("");
 const password = ref("");
 const passwordConfirm = ref("");
+const bootstrapToken = ref("");
 const showPassword = ref(false);
 const submitting = ref(false);
 const setupRequired = ref(false);
@@ -121,7 +133,7 @@ async function submit(): Promise<void> {
   error.value = "";
   try {
     if (setupRequired.value) {
-      await setupAdmin(email.value.trim(), password.value, passwordConfirm.value, loginPath);
+      await setupAdmin(email.value.trim(), password.value, passwordConfirm.value, loginPath, bootstrapToken.value);
     } else {
       await loginAdmin(email.value.trim(), password.value, loginPath);
     }

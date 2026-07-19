@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"diana-qq-bot/model/applog"
@@ -16,6 +17,37 @@ import (
 
 	"rsc.io/pdf"
 )
+
+func TestResolverPlatformHostMatchingRejectsLookalikes(t *testing.T) {
+	for _, host := range []string{
+		"bilibili.com.attacker.example",
+		"evil-youtube.com",
+		"twitter.com.example",
+		"xiaohongshu.com.attacker.example",
+		"notdouyin.com",
+	} {
+		if isKnownResolverPlatformHost(host) {
+			t.Fatalf("lookalike host %q was trusted", host)
+		}
+	}
+	for _, host := range []string{"bilibili.com", "www.bilibili.com", "m.youtube.com", "x.com", "www.xiaohongshu.com", "v.douyin.com"} {
+		if !isKnownResolverPlatformHost(host) {
+			t.Fatalf("real platform host %q was rejected", host)
+		}
+	}
+}
+
+func TestResolverVideoDownloadLimitCannotBeDisabledByLegacyZero(t *testing.T) {
+	t.Setenv("DIANA_RESOLVER_VIDEO_MAX_MB", "64")
+	t.Setenv("DIANA_RESOLVER_VIDEO_DOWNLOAD_MAX_MB", "0")
+	if got := resolverVideoDownloadMaxMB(); got != 64 {
+		t.Fatalf("legacy zero download limit = %d, want fallback 64", got)
+	}
+	t.Setenv("DIANA_RESOLVER_VIDEO_DOWNLOAD_MAX_MB", "32")
+	if got := resolverVideoDownloadMaxMB(); got != 32 {
+		t.Fatalf("legacy positive download limit = %d, want 32", got)
+	}
+}
 
 // TestPluginManagerInstallEnableRun 验证对应功能场景。
 func TestPluginManagerInstallEnableRun(t *testing.T) {
@@ -767,13 +799,22 @@ type panicPlugin struct{}
 type panicObserverPlugin struct{}
 
 type captureAppLogs struct {
+	mu      sync.Mutex
 	entries []applog.Entry
 }
 
 // AppendLog 封装当前模块的 AppendLog 逻辑。
 func (c *captureAppLogs) AppendLog(_ context.Context, entry applog.Entry) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.entries = append(c.entries, entry)
 	return nil
+}
+
+func (c *captureAppLogs) entriesSnapshot() []applog.Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]applog.Entry(nil), c.entries...)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

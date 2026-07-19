@@ -65,7 +65,7 @@ After startup, open:
 http://127.0.0.1:18080${DIANA_ADMIN_LOGIN_PATH}
 ```
 
-`DIANA_ADMIN_TOKEN` must contain at least 32 characters and should be generated from a cryptographically secure source such as `openssl rand -hex 32`. On the first visit to `/login`, the owner must enter their own administrator email and password; no default email is supplied or prefilled. Browser sessions use a 15-minute JWT access token and a rotating 30-day refresh token in HttpOnly cookies. Refresh hashes and device metadata are retained server-side so individual devices can be revoked immediately. Password changes revoke every other device. Scripts can still call management APIs with `Authorization: Bearer <DIANA_ADMIN_TOKEN>`.
+`DIANA_ADMIN_TOKEN` must contain at least 32 characters and should be generated from a cryptographically secure source such as `openssl rand -hex 32`. On the first visit to `/login`, the owner must enter their own administrator email and password; no default email is supplied or prefilled. First-run setup from a non-loopback address also requires `DIANA_ADMIN_TOKEN` as the bootstrap token. Browser sessions use a 15-minute JWT access token and a rotating 30-day refresh token in HttpOnly cookies. Refresh hashes and device metadata are retained server-side so individual devices can be revoked immediately. Password changes revoke every other device. Scripts can still call management APIs with `Authorization: Bearer <DIANA_ADMIN_TOKEN>`.
 
 To log in to NapCat or switch quick-login accounts directly from Diana, attach both containers to the same Docker network, set `DIANA_NAPCAT_WEBUI_URL` to NapCat's internal WebUI address, and keep `DIANA_NAPCAT_WEBUI_TOKEN` equal to the strong random token in NapCat's `webui.json`. Diana uses this token only on the backend and never sends it to the browser.
 
@@ -288,7 +288,7 @@ Browser tools require Chrome/Chromium with a remote debugging port, for example:
 chrome --remote-debugging-port=9222
 ```
 
-Set `Agent work dir` to a dedicated reference directory. Avoid pointing it at directories that contain secrets or production data. Command execution is powerful; in production, set `DIANA_AGENT_COMMAND_ALLOWLIST` to only the commands you need.
+Set `Agent work dir` to a dedicated reference directory. Avoid pointing it at directories that contain secrets or production data. `run_command` is not registered by default; explicitly set `DIANA_AGENT_COMMAND_ALLOWLIST` or configure the WebUI allowlist to enable it.
 
 ## Install Plugins In WebUI
 
@@ -325,6 +325,7 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | `PORT` | `18080` | WebUI and OneBot endpoint listen port |
 | `DIANA_ADMIN_TOKEN` | empty | Static Bearer token for automated management API access; at least 32 characters |
 | `DIANA_ADMIN_EMAIL` | empty | Optional environment-provided initial email; leave empty to complete first-run setup in the browser |
+| `DIANA_ADMIN_SECURE_COOKIES` | `false` | Set to `true` behind HTTPS so management cookies always use `Secure` |
 | `DIANA_ADMIN_LOGIN_PATH` | `/login` | Optional environment-managed hidden login path; one segment with at least 11 characters |
 | `DIANA_ADMIN_CREDENTIALS_FILE` | next to the SQLite database | Stores the email, bcrypt password hash, and JWT signing secret with mode `0600` |
 | `DIANA_NAPCAT_WEBUI_URL` | empty | Internal NapCat WebUI URL; enables login management when configured with the token |
@@ -354,6 +355,10 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | `QQBOT_ENABLED` | `false` | Enable the bot automatically on startup |
 | `ONEBOT_REVERSE_WS_ENDPOINT` | `ws://127.0.0.1:<PORT>/onebot/v11/ws` | Reverse WebSocket URL for NapCat |
 | `ONEBOT_ACCESS_TOKEN` | empty | OneBot access token |
+| `DIANA_TWITTER_RESOLVER_API` | empty | Optional HTTPS X/Twitter resolver; supports a `{url}` placeholder, otherwise yt-dlp is used |
+| `DIANA_RESOLVER_VIDEO_MAX_MB` | `100` | Maximum downloaded and sent resolver video size in MB |
+| `DIANA_RESOLVER_VIDEO_MAX_DURATION` | `480` | Maximum accepted resolver video duration in seconds |
+| `DIANA_ALLOW_PRIVATE_HTTP_FETCHES` | `false` | Allow link/media plugins to access private network targets; enable only for trusted internal resources |
 | `DIANA_PASSIVE_REPLY_CHANCE` | `1` | Sampling rate for proactive group replies when the bot is not directly invoked; `1` means always reply after the strict router accepts it |
 | `DIANA_PASSIVE_REPLY_THRESHOLD` | `0.8` | Minimum semantic-router confidence; only messages that clearly need the bot or concern the bot may pass |
 | `DIANA_OCR_CONCURRENCY` | `3` | Concurrent page render and vision OCR calls per scanned PDF |
@@ -381,7 +386,7 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | `DIANA_AGENT_WORK_DIR` | `.` | Working directory available to Agent tools |
 | `AGENT_WORK_DIR` | `.` | Compatibility alias for `DIANA_AGENT_WORK_DIR` |
 | `DIANA_AGENT_MAX_STEPS` | `8` | Max Agent tool-loop steps per reply, capped at `8` |
-| `DIANA_AGENT_COMMAND_ALLOWLIST` | common dev commands | Commands available to Agent `run_command`, comma-separated; `*` allows all commands |
+| `DIANA_AGENT_COMMAND_ALLOWLIST` | empty (disabled) | Commands available to Agent `run_command`, comma-separated; the tool is registered only when explicitly configured, and `*` allows all commands |
 | `DIANA_AGENT_COMMAND_TIMEOUT_MS` | `10000` | Local command timeout, capped at `60000` |
 | `DIANA_WEB_SEARCH_CONFIG_FILE` | `<Agent work dir>/web-search.json` | Web search configuration file, also managed by the WebUI `Web Search` page |
 | `DIANA_WEB_SEARCH_CONFIGS` | empty | Inline JSON configuration; overrides the file for read-only deployments |

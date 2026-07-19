@@ -201,6 +201,8 @@ func performAdminAccessRequest(router http.Handler, method, target string, body 
 		requestBody = body
 	}
 	request := httptest.NewRequest(method, target, requestBody)
+	request.RemoteAddr = "127.0.0.1:43210"
+	request.Host = "127.0.0.1:18080"
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}

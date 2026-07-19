@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,6 +12,47 @@ import (
 	"diana-qq-bot/model/llm"
 	"diana-qq-bot/model/qqbot"
 )
+
+func TestSQLiteStoreUsesPrivateFilePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private-data")
+	path := filepath.Join(dir, "app.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("database mode = %#o, want 0600", got)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("database directory mode = %#o, want 0700", got)
+	}
+}
+
+func TestSQLiteStoreRejectsSymlinkDatabasePath(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.db")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.db")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if store, err := NewSQLiteStore(link); err == nil {
+		_ = store.Close()
+		t.Fatal("symlink database path was accepted")
+	}
+}
 
 // TestSQLiteStorePersistsConfigsAndPluginStates 验证对应功能场景。
 func TestSQLiteStorePersistsConfigsAndPluginStates(t *testing.T) {

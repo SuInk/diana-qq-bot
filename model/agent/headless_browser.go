@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -16,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"diana-qq-bot/model/netguard"
 
 	"golang.org/x/net/html"
 )
@@ -291,72 +291,7 @@ func validateSandboxedBrowserURL(ctx context.Context, value string) error {
 	if err := validateBrowserURL(value); err != nil {
 		return err
 	}
-	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil {
-		return err
-	}
-	if parsed.User != nil {
-		return errors.New("browser URLs containing credentials are not allowed")
-	}
-	host := strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-	if blockedBrowserHostname(host) {
-		return fmt.Errorf("browser access to local host %q is blocked", host)
-	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if unsafeBrowserAddress(addr, false) {
-			return fmt.Errorf("browser access to private address %q is blocked", host)
-		}
-		return nil
-	}
-	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
-	if err != nil {
-		return fmt.Errorf("browser host resolution failed: %w", err)
-	}
-	if len(addresses) == 0 {
-		return errors.New("browser host did not resolve to an address")
-	}
-	for _, address := range addresses {
-		addr, ok := netip.AddrFromSlice(address.IP)
-		if ok && unsafeBrowserAddress(addr.Unmap(), true) {
-			return fmt.Errorf("browser host %q resolves to a private address", host)
-		}
-	}
-	return nil
-}
-
-func blockedBrowserHostname(host string) bool {
-	if host == "localhost" || host == "localhost.localdomain" || host == "metadata.google.internal" {
-		return true
-	}
-	for _, suffix := range []string{".localhost", ".local", ".internal", ".home.arpa"} {
-		if strings.HasSuffix(host, suffix) {
-			return true
-		}
-	}
-	return host == "host.docker.internal" || host == "gateway.docker.internal"
-}
-
-func unsafeBrowserAddress(addr netip.Addr, allowSyntheticDNS bool) bool {
-	addr = addr.Unmap()
-	if allowSyntheticDNS && netip.MustParsePrefix("198.18.0.0/15").Contains(addr) {
-		// macOS proxy/TUN clients commonly use RFC 2544 addresses as synthetic DNS.
-		return false
-	}
-	if !addr.IsValid() || !addr.IsGlobalUnicast() || addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() {
-		return true
-	}
-	for _, prefix := range []netip.Prefix{
-		netip.MustParsePrefix("0.0.0.0/8"),
-		netip.MustParsePrefix("100.64.0.0/10"),
-		netip.MustParsePrefix("198.18.0.0/15"),
-	} {
-		if prefix.Contains(addr) {
-			return true
-		}
-	}
-	return false
+	return netguard.ValidatePublicURLStrict(ctx, value)
 }
 
 func parseRenderedPage(data []byte, requestedURL string, maxChars int, truncated bool) (RenderedPage, error) {

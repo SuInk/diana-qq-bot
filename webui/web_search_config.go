@@ -141,7 +141,7 @@ func writeWebSearchConfig(path string, config agent.WebSearchConfig) error {
 	}
 	body = append(body, '\n')
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	temp, err := os.CreateTemp(dir, ".web-search-*.json")
@@ -151,15 +151,15 @@ func writeWebSearchConfig(path string, config agent.WebSearchConfig) error {
 	tempPath := temp.Name()
 	defer os.Remove(tempPath)
 	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return err
 	}
 	if _, err := temp.Write(body); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return err
 	}
 	if err := temp.Sync(); err != nil {
-		temp.Close()
+		_ = temp.Close()
 		return err
 	}
 	if err := temp.Close(); err != nil {

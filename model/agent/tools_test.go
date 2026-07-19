@@ -10,6 +10,30 @@ import (
 	"time"
 )
 
+func TestDefaultRegistryDoesNotExposeRunCommand(t *testing.T) {
+	registry, err := NewDefaultToolRegistry(Config{WorkDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.Get("run_command"); ok {
+		t.Fatal("run_command must require an explicit command allowlist")
+	}
+}
+
+func TestSafePathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safePath(root, "escape/secret.txt"); err == nil {
+		t.Fatal("safePath followed a symlink outside the workdir")
+	}
+}
+
 // TestSafePathRejectsEscapes 验证对应功能场景。
 func TestSafePathRejectsEscapes(t *testing.T) {
 	root := t.TempDir()

@@ -2,9 +2,11 @@ package qqbot
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+const maxOneBotWebSocketFrameBytes = 8 << 20
 
 type OneBotReverseServer struct {
 	mu      sync.RWMutex
@@ -38,8 +42,9 @@ func NewOneBotReverseServer(cfg OneBotConfig) *OneBotReverseServer {
 			UpdatedAt: time.Now(),
 		},
 		upgrader: websocket.Upgrader{
-			// 反向 WS 通常来自本机或局域网 NapCat，跨 origin 由 access token 控制。
-			CheckOrigin: func(*http.Request) bool { return true },
+			// NapCat does not send Origin. Browser clients must be same-origin so a
+			// hostile page cannot reuse a token embedded in a WebSocket URL.
+			CheckOrigin: sameOriginWebSocketRequest,
 		},
 	}
 }
@@ -80,6 +85,7 @@ func (s *OneBotReverseServer) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		s.setStatus(false, s.Status().SelfID, err.Error())
 		return
 	}
+	conn.SetReadLimit(maxOneBotWebSocketFrameBytes)
 
 	s.connMu.Lock()
 	if s.conn != nil {
@@ -275,11 +281,14 @@ func (s *OneBotReverseServer) resolveCall(envelope oneBotEnvelope) {
 
 // setStatus 更新反向 OneBot server 状态。
 func (s *OneBotReverseServer) setStatus(connected bool, selfID string, lastError string) {
+	s.mu.RLock()
+	endpoint := s.cfg.Endpoint
+	s.mu.RUnlock()
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
 	s.status = ChannelStatus{
 		Connected: connected,
-		Endpoint:  s.cfg.Endpoint,
+		Endpoint:  endpoint,
 		SelfID:    selfID,
 		LastError: lastError,
 		UpdatedAt: time.Now(),
@@ -289,14 +298,41 @@ func (s *OneBotReverseServer) setStatus(connected bool, selfID string, lastError
 // authorized 校验反向 WebSocket 请求鉴权。
 func (s *OneBotReverseServer) authorized(r *http.Request) bool {
 	s.mu.RLock()
-	token := s.cfg.AccessToken
+	token := strings.TrimSpace(s.cfg.AccessToken)
 	s.mu.RUnlock()
 	if token == "" {
-		return true
+		return false
 	}
 	// 兼容 Authorization Bearer 和 access_token 查询参数两种 NapCat 常见鉴权方式。
-	if got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "); got == token {
+	if got := bearerToken(r.Header.Get("Authorization")); secureOneBotTokenEqual(got, token) {
 		return true
 	}
-	return r.URL.Query().Get("access_token") == token
+	return secureOneBotTokenEqual(r.URL.Query().Get("access_token"), token)
+}
+
+func bearerToken(value string) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(value), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func secureOneBotTokenEqual(left, right string) bool {
+	if left == "" || right == "" || len(left) != len(right) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+}
+
+func sameOriginWebSocketRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
 }

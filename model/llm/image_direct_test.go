@@ -70,7 +70,7 @@ func TestProviderConfigRejectsInvalidImageOrigin(t *testing.T) {
 		Provider:    ProviderOpenAICompatible,
 		APIKey:      "secret",
 		Model:       "gpt-test",
-		ImageOrigin: "129.153.75.15",
+		ImageOrigin: "203.0.113.10",
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "host:port") {
 		t.Fatalf("error = %v", err)

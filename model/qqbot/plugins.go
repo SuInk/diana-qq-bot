@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"diana-qq-bot/model/netguard"
+
 	"diana-qq-bot/model/agent"
 	"diana-qq-bot/model/applog"
 	"diana-qq-bot/model/llm"
@@ -474,7 +476,7 @@ type ResolverPlugin struct {
 // NewResolverPlugin 创建官方内置链接解析插件。
 func NewResolverPlugin(client *http.Client) *ResolverPlugin {
 	if client == nil {
-		client = &http.Client{Timeout: 8 * time.Second}
+		client = netguard.NewPublicHTTPClient(8 * time.Second)
 	}
 	return &ResolverPlugin{client: client, videoDownloader: downloadPlatformVideoFile}
 }
@@ -849,15 +851,14 @@ func douyinImageURLs(detail douyinAwemeDetail) []string {
 }
 
 func fetchTwitterMediaURL(ctx context.Context, raw string) string {
-	apiURL := fmt.Sprintf(twitterResolverAPI, url.QueryEscape(raw))
+	apiURL := configuredTwitterResolverURL(ctx, raw)
+	if apiURL == "" {
+		return ""
+	}
 	headers := resolverCommonHeaders()
 	headers["Accept"] = "ext/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
 	headers["Accept-Encoding"] = "gzip, deflate"
 	headers["Accept-Language"] = "zh-CN,zh;q=0.9"
-	headers["Host"] = "47.99.158.118"
-	headers["Proxy-Connection"] = "keep-alive"
-	headers["Upgrade-Insecure-Requests"] = "1"
-	headers["Sec-Fetch-User"] = "?1"
 	var resp struct {
 		Data struct {
 			URL string `json:"url"`
@@ -1139,24 +1140,23 @@ func knownResolverPlatformURLs(text string) []string {
 
 func isKnownResolverPlatformURL(raw string) bool {
 	parsed, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return false
 	}
 	return isKnownResolverPlatformHost(parsed.Hostname())
 }
 
 func isKnownResolverPlatformHost(host string) bool {
-	host = strings.ToLower(strings.TrimPrefix(host, "www."))
 	switch {
-	case strings.Contains(host, "bilibili.com") || host == "b23.tv" || host == "bili2233.cn":
+	case hostMatchesDomain(host, "bilibili.com", "b23.tv", "bili2233.cn"):
 		return true
-	case strings.Contains(host, "youtube.com") || host == "youtu.be":
+	case hostMatchesDomain(host, "youtube.com", "youtu.be"):
 		return true
-	case strings.Contains(host, "x.com") || strings.Contains(host, "twitter.com"):
+	case hostMatchesDomain(host, "x.com", "twitter.com"):
 		return true
-	case strings.Contains(host, "xiaohongshu.com") || host == "xhslink.com":
+	case hostMatchesDomain(host, "xiaohongshu.com", "xhslink.com"):
 		return true
-	case strings.Contains(host, "douyin.com"):
+	case hostMatchesDomain(host, "douyin.com"):
 		return true
 	default:
 		return false
@@ -1166,10 +1166,9 @@ func isKnownResolverPlatformHost(host string) bool {
 func isYouTubeURL(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return strings.Contains(raw, "youtube.com") || strings.Contains(raw, "youtu.be")
+		return false
 	}
-	host := strings.ToLower(strings.TrimPrefix(parsed.Hostname(), "www."))
-	return strings.Contains(host, "youtube.com") || host == "youtu.be"
+	return hostMatchesDomain(parsed.Hostname(), "youtube.com", "youtu.be")
 }
 
 // resolveURL 获取链接平台和标题摘要。
@@ -1188,19 +1187,18 @@ func resolveURL(ctx context.Context, client *http.Client, raw string) string {
 
 // platformName 根据域名识别常见平台名称。
 func platformName(host string) string {
-	host = strings.ToLower(strings.TrimPrefix(host, "www."))
 	switch {
-	case strings.Contains(host, "bilibili.com") || host == "b23.tv" || host == "bili2233.cn":
+	case hostMatchesDomain(host, "bilibili.com", "b23.tv", "bili2233.cn"):
 		return "Bilibili"
-	case strings.Contains(host, "youtube.com") || host == "youtu.be":
+	case hostMatchesDomain(host, "youtube.com", "youtu.be"):
 		return "YouTube"
-	case strings.Contains(host, "x.com") || strings.Contains(host, "twitter.com"):
+	case hostMatchesDomain(host, "x.com", "twitter.com"):
 		return "X"
-	case strings.Contains(host, "xiaohongshu.com") || host == "xhslink.com":
+	case hostMatchesDomain(host, "xiaohongshu.com", "xhslink.com"):
 		return "小红书"
-	case strings.Contains(host, "douyin.com"):
+	case hostMatchesDomain(host, "douyin.com"):
 		return "抖音"
-	case strings.Contains(host, "github.com"):
+	case hostMatchesDomain(host, "github.com"):
 		return "GitHub"
 	default:
 		return host

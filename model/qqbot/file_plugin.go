@@ -19,6 +19,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"diana-qq-bot/model/netguard"
+
 	"rsc.io/pdf"
 )
 
@@ -29,10 +31,11 @@ const (
 )
 
 type FileParserPlugin struct {
-	client      *http.Client
-	maxBytes    int64
-	maxChars    int
-	pdfRenderer pdfPageRenderer
+	client        *http.Client
+	maxBytes      int64
+	maxChars      int
+	pdfRenderer   pdfPageRenderer
+	trustedClient *http.Client
 }
 
 type fileRef struct {
@@ -42,18 +45,22 @@ type fileRef struct {
 	FileID    string
 	BusID     string
 	GroupID   string
+	Trusted   bool
 }
 
 // NewFileParserPlugin 创建官方内置文件解析插件。
 func NewFileParserPlugin(client *http.Client) *FileParserPlugin {
+	trustedClient := client
 	if client == nil {
-		client = &http.Client{Timeout: 15 * time.Second}
+		client = netguard.NewPublicHTTPClient(15 * time.Second)
+		trustedClient = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &FileParserPlugin{
-		client:      client,
-		maxBytes:    defaultFileParserMaxBytes,
-		maxChars:    defaultFileParserMaxChars,
-		pdfRenderer: newWASMPDFRenderer(),
+		client:        client,
+		maxBytes:      defaultFileParserMaxBytes,
+		maxChars:      defaultFileParserMaxChars,
+		pdfRenderer:   newWASMPDFRenderer(),
+		trustedClient: trustedClient,
 	}
 }
 
@@ -159,6 +166,7 @@ func collectFileRefs(req PluginRequest) []fileRef {
 				BusID:   firstNonEmpty(segment.Data["busid"], segment.Data["bus_id"]),
 				GroupID: groupID,
 				URL:     raw,
+				Trusted: true,
 			}
 			if normalizedFileURL(raw) != "" {
 				ref.URL = raw
@@ -252,7 +260,11 @@ func (p *FileParserPlugin) parseRef(ctx context.Context, channel Channel, ref fi
 
 func (p *FileParserPlugin) readRef(ctx context.Context, ref fileRef) ([]byte, string, string, error) {
 	if ref.URL != "" {
-		data, contentType, err := p.readURL(ctx, ref.URL)
+		client := p.client
+		if ref.Trusted && p.trustedClient != nil {
+			client = p.trustedClient
+		}
+		data, contentType, err := p.readURLWithClient(ctx, client, ref.URL)
 		return data, ref.URL, contentType, err
 	}
 	if ref.LocalPath != "" {
@@ -485,12 +497,16 @@ func fileRefFromOneBotSegment(base fileRef, data map[string]any) (fileRef, bool)
 
 // readURL 按大小限制读取远程文件内容。
 func (p *FileParserPlugin) readURL(ctx context.Context, raw string) ([]byte, string, error) {
+	return p.readURLWithClient(ctx, p.client, raw)
+}
+
+func (p *FileParserPlugin) readURLWithClient(ctx context.Context, client *http.Client, raw string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
 		return nil, "", err
 	}
 	req.Header.Set("User-Agent", "DianaQQBot/0.1")
-	resp, err := p.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

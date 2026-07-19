@@ -87,20 +87,23 @@ func TestDianaImageAgentToolGeneratesFromResolvedPrompt(t *testing.T) {
 	if !strings.Contains(submittedPrompt, "#4B0082") || !strings.Contains(submittedPrompt, "#FFD700") || !strings.Contains(submittedPrompt, "群聊：测试群") {
 		t.Fatalf("submitted prompt = %q", submittedPrompt)
 	}
-	if len(sharer.paths) != 1 {
-		t.Fatalf("shared paths = %#v", sharer.paths)
+	sharedPaths := sharer.pathsSnapshot()
+	if len(sharedPaths) != 1 {
+		t.Fatalf("shared paths = %#v", sharedPaths)
 	}
-	defer os.Remove(sharer.paths[0])
-	data, err := os.ReadFile(sharer.paths[0])
+	defer os.Remove(sharedPaths[0])
+	data, err := os.ReadFile(sharedPaths[0])
 	if err != nil || string(data) != "search-derived-image" {
 		t.Fatalf("shared image = %q, err = %v", data, err)
 	}
-	if len(channel.sent) != 1 || channel.sent[0].Text != "按检索结果画好了。" || len(channel.sent[0].ImageURLs) != 1 || channel.sent[0].ImageURLs[0] != sharer.url {
-		t.Fatalf("sent = %#v", channel.sent)
+	sent := channel.sentSnapshot()
+	if len(sent) != 1 || sent[0].Text != "按检索结果画好了。" || len(sent[0].ImageURLs) != 1 || sent[0].ImageURLs[0] != sharer.url {
+		t.Fatalf("sent = %#v", sent)
 	}
 	var loggedPrompt string
 	imageLogFound := false
-	for _, entry := range logs.entries {
+	entries := logs.entriesSnapshot()
+	for _, entry := range entries {
 		if entry.Action == "qqbot.image.generate" {
 			loggedPrompt, _ = entry.Metadata["prompt"].(string)
 			imageLogFound = true
@@ -108,7 +111,7 @@ func TestDianaImageAgentToolGeneratesFromResolvedPrompt(t *testing.T) {
 		}
 	}
 	if !imageLogFound {
-		t.Fatalf("logs = %#v", logs.entries)
+		t.Fatalf("logs = %#v", entries)
 	}
 	if !strings.Contains(loggedPrompt, "#4B0082") || !strings.Contains(loggedPrompt, "群聊：测试群") {
 		t.Fatalf("logged prompt = %q", loggedPrompt)
@@ -205,14 +208,15 @@ func TestRuntimeAgentSearchesBeforeGeneratingImage(t *testing.T) {
 	if search.calls != 1 {
 		t.Fatalf("search calls = %d", search.calls)
 	}
-	if len(provider.requests) != 4 {
-		t.Fatalf("provider requests = %d", len(provider.requests))
+	requests := provider.requestsSnapshot()
+	if len(requests) != 4 {
+		t.Fatalf("provider requests = %d", len(requests))
 	}
-	if !requestMessagesContain(provider.requests[2].Messages, search.result) {
-		t.Fatalf("image tool decision did not receive search result: %#v", provider.requests[2].Messages)
+	if !requestMessagesContain(requests[2].Messages, search.result) {
+		t.Fatalf("image tool decision did not receive search result: %#v", requests[2].Messages)
 	}
-	if !requestMessagesContain(provider.requests[1].Messages, "先完成搜索和必要的网页核验") || !requestMessagesContain(provider.requests[1].Messages, dianaImageToolName) {
-		t.Fatalf("agent prompt does not enforce search-before-image: %#v", provider.requests[1].Messages)
+	if !requestMessagesContain(requests[1].Messages, "先完成搜索和必要的网页核验") || !requestMessagesContain(requests[1].Messages, dianaImageToolName) {
+		t.Fatalf("agent prompt does not enforce search-before-image: %#v", requests[1].Messages)
 	}
 	if !strings.Contains(submittedPrompt, "#4B0082") || !strings.Contains(submittedPrompt, "#FFD700") {
 		t.Fatalf("submitted prompt = %q", submittedPrompt)
@@ -220,12 +224,13 @@ func TestRuntimeAgentSearchesBeforeGeneratingImage(t *testing.T) {
 	if reply != "文字说明先发给你，图片完成后会自动补上。" {
 		t.Fatalf("reply = %q", reply)
 	}
-	if len(channel.sent) != 2 {
-		t.Fatalf("sent = %#v", channel.sent)
+	sent := channel.sentSnapshot()
+	if len(sent) != 2 {
+		t.Fatalf("sent = %#v", sent)
 	}
 	textFound := false
 	imageFound := false
-	for _, message := range channel.sent {
+	for _, message := range sent {
 		if message.Text == reply && len(message.ImageURLs) == 0 {
 			textFound = true
 		}
@@ -234,15 +239,17 @@ func TestRuntimeAgentSearchesBeforeGeneratingImage(t *testing.T) {
 		}
 	}
 	if !textFound || !imageFound {
-		t.Fatalf("sent = %#v", channel.sent)
+		t.Fatalf("sent = %#v", sent)
 	}
-	if len(sharer.paths) != 1 {
-		t.Fatalf("shared paths = %#v", sharer.paths)
+	sharedPaths := sharer.pathsSnapshot()
+	if len(sharedPaths) != 1 {
+		t.Fatalf("shared paths = %#v", sharedPaths)
 	}
-	defer os.Remove(sharer.paths[0])
+	defer os.Remove(sharedPaths[0])
 	wantTargets := map[string]bool{"web_search.search": false, dianaImageToolName: false}
 	imageLogFound := false
-	for _, entry := range logs.entries {
+	entries := logs.entriesSnapshot()
+	for _, entry := range entries {
 		if entry.Action == "qqbot.agent_tool" {
 			if _, ok := wantTargets[entry.Target]; ok {
 				wantTargets[entry.Target] = true
@@ -253,7 +260,7 @@ func TestRuntimeAgentSearchesBeforeGeneratingImage(t *testing.T) {
 		}
 	}
 	if !wantTargets["web_search.search"] || !wantTargets[dianaImageToolName] || !imageLogFound {
-		t.Fatalf("logs = %#v", logs.entries)
+		t.Fatalf("logs = %#v", entries)
 	}
 }
 

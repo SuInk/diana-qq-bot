@@ -127,12 +127,14 @@ func TestRuntimeDirectTriggersBypassPassiveRouter(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForCondition(t, time.Second, func() bool {
-				return len(channel.sent) == 1
+				return len(channel.sentSnapshot()) == 1
 			})
-			if len(provider.requests) != 3 || channel.sent[0].Text != "直接触发成功" {
-				t.Fatalf("requests=%d sent=%#v", len(provider.requests), channel.sent)
+			requests := provider.requestsSnapshot()
+			sent := channel.sentSnapshot()
+			if len(requests) != 3 || sent[0].Text != "直接触发成功" {
+				t.Fatalf("requests=%d sent=%#v", len(requests), sent)
 			}
-			for _, request := range provider.requests {
+			for _, request := range requests {
 				if len(request.Messages) > 0 && strings.Contains(request.Messages[0].Content, "严格被动插话路由器") {
 					t.Fatalf("direct trigger unexpectedly entered passive router: %#v", request.Messages)
 				}
@@ -2191,8 +2193,11 @@ func TestRuntimePassiveReplyUsesRoutingProfile(t *testing.T) {
 		},
 	}
 	var attempts []string
+	var attemptsMu sync.Mutex
 	runtime := NewRuntime(BotConfig{BotQQ: "42", PassiveReplyChance: 1}, channel, NewPluginManager(), store, nil, nil, nil)
 	runtime.SetLLMProviderConfigFactory(func(cfg llm.ProviderConfig) (LLMProvider, error) {
+		attemptsMu.Lock()
+		defer attemptsMu.Unlock()
 		attempts = append(attempts, cfg.Model)
 		if len(attempts) == 1 {
 			return &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.98,"category":"needs_response","directed_at_bot":false,"answerable":true}`}, nil
@@ -2215,18 +2220,22 @@ func TestRuntimePassiveReplyUsesRoutingProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCondition(t, time.Second, func() bool {
-		return len(channel.sent) == 1
+		return len(channel.sentSnapshot()) == 1
 	})
-	if channel.sent[0].Text != "我也插一句。" {
-		t.Fatalf("sent = %#v", channel.sent)
+	sent := channel.sentSnapshot()
+	if sent[0].Text != "我也插一句。" {
+		t.Fatalf("sent = %#v", sent)
 	}
+	attemptsMu.Lock()
+	attemptsSnapshot := append([]string(nil), attempts...)
+	attemptsMu.Unlock()
 	wantAttempts := []string{"routing-model", "routing-model", "main-model"}
-	if len(attempts) != len(wantAttempts) {
-		t.Fatalf("attempts = %#v, want %#v", attempts, wantAttempts)
+	if len(attemptsSnapshot) != len(wantAttempts) {
+		t.Fatalf("attempts = %#v, want %#v", attemptsSnapshot, wantAttempts)
 	}
 	for i := range wantAttempts {
-		if attempts[i] != wantAttempts[i] {
-			t.Fatalf("attempts = %#v, want %#v", attempts, wantAttempts)
+		if attemptsSnapshot[i] != wantAttempts[i] {
+			t.Fatalf("attempts = %#v, want %#v", attemptsSnapshot, wantAttempts)
 		}
 	}
 	if store.set.ActiveID != "main" {
@@ -2409,11 +2418,12 @@ func TestRuntimeCachesImagesWithoutHistoryPlugin(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCondition(t, time.Second, func() bool {
-		return len(channel.sent) == 1
+		return len(channel.sentSnapshot()) == 1
 	})
 	wantImageURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(imageBody)
-	if !requestHasImageURL(provider.request, wantImageURL) {
-		t.Fatalf("request missing cached image data URL: %#v", provider.request.Messages)
+	request := provider.requestSnapshot()
+	if !requestHasImageURL(request, wantImageURL) {
+		t.Fatalf("request missing cached image data URL: %#v", request.Messages)
 	}
 }
 
@@ -2599,31 +2609,33 @@ func TestRuntimeResolverOnlySendsAndRecordsWithoutLLM(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCondition(t, time.Second, func() bool {
-		return len(channel.calls) == 3
+		return len(channel.callsSnapshot()) == 3
 	})
 	if got := llmCalls.Load(); got != 0 {
 		t.Fatalf("llm calls = %d, want 0", got)
 	}
-	if len(channel.sent) != 0 {
-		t.Fatalf("sent = %#v", channel.sent)
+	sent := channel.sentSnapshot()
+	if len(sent) != 0 {
+		t.Fatalf("sent = %#v", sent)
 	}
-	if channel.calls[0].action != "send_private_msg" || channel.calls[1].action != "send_private_msg" || channel.calls[2].action != "send_group_forward_msg" {
-		t.Fatalf("calls = %#v", channel.calls)
+	calls := channel.callsSnapshot()
+	if calls[0].action != "send_private_msg" || calls[1].action != "send_private_msg" || calls[2].action != "send_group_forward_msg" {
+		t.Fatalf("calls = %#v", calls)
 	}
-	if channel.calls[0].params["user_id"] != int64(42) || channel.calls[1].params["user_id"] != int64(42) {
-		t.Fatalf("staging params = %#v %#v", channel.calls[0].params, channel.calls[1].params)
+	if calls[0].params["user_id"] != int64(42) || calls[1].params["user_id"] != int64(42) {
+		t.Fatalf("staging params = %#v %#v", calls[0].params, calls[1].params)
 	}
-	firstMessage, _ := channel.calls[0].params["message"].([]map[string]any)
+	firstMessage, _ := calls[0].params["message"].([]map[string]any)
 	if !messageSegmentsContainText(firstMessage, "识别：小蓝鸟学习版") {
-		t.Fatalf("first forward message = %#v", channel.calls[0].params["message"])
+		t.Fatalf("first forward message = %#v", calls[0].params["message"])
 	}
-	secondMessage, _ := channel.calls[1].params["message"].([]map[string]any)
+	secondMessage, _ := calls[1].params["message"].([]map[string]any)
 	if !messageSegmentsContainType(secondMessage, "video") {
-		t.Fatalf("second forward message = %#v", channel.calls[1].params["message"])
+		t.Fatalf("second forward message = %#v", calls[1].params["message"])
 	}
-	nodes, _ := channel.calls[2].params["messages"].([]map[string]any)
+	nodes, _ := calls[2].params["messages"].([]map[string]any)
 	if len(nodes) != 2 {
-		t.Fatalf("forward nodes = %#v", channel.calls[2].params["messages"])
+		t.Fatalf("forward nodes = %#v", calls[2].params["messages"])
 	}
 	history := runtime.contextHistory(event)
 	if len(history) < 1 {
@@ -2638,8 +2650,9 @@ func TestRuntimeResolverOnlySendsAndRecordsWithoutLLM(t *testing.T) {
 	if !recordedForward {
 		t.Fatalf("history missing bot resolver reply: %#v", history)
 	}
-	if len(logs.entries) != 1 || logs.entries[0].Action != "qqbot.resolver.video_download" {
-		t.Fatalf("resolver logs = %#v", logs.entries)
+	entries := logs.entriesSnapshot()
+	if len(entries) != 1 || entries[0].Action != "qqbot.resolver.video_download" {
+		t.Fatalf("resolver logs = %#v", entries)
 	}
 }
 
@@ -2679,13 +2692,14 @@ func TestRuntimeResolverPrivateLinkSkipsLLM(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCondition(t, time.Second, func() bool {
-		return len(channel.calls) == 3
+		return len(channel.callsSnapshot()) == 3
 	})
 	if got := llmCalls.Load(); got != 0 {
 		t.Fatalf("llm calls = %d, want 0", got)
 	}
-	if channel.calls[0].action != "send_private_msg" || channel.calls[1].action != "send_private_msg" || channel.calls[2].action != "send_private_forward_msg" {
-		t.Fatalf("calls = %#v", channel.calls)
+	calls := channel.callsSnapshot()
+	if calls[0].action != "send_private_msg" || calls[1].action != "send_private_msg" || calls[2].action != "send_private_forward_msg" {
+		t.Fatalf("calls = %#v", calls)
 	}
 }
 
@@ -2728,13 +2742,14 @@ func TestRuntimeResolverMentionedGroupLinkSkipsLLM(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForCondition(t, time.Second, func() bool {
-		return len(channel.calls) == 3
+		return len(channel.callsSnapshot()) == 3
 	})
 	if got := llmCalls.Load(); got != 0 {
 		t.Fatalf("llm calls = %d, want 0", got)
 	}
-	if channel.calls[0].action != "send_private_msg" || channel.calls[1].action != "send_private_msg" || channel.calls[2].action != "send_group_forward_msg" {
-		t.Fatalf("calls = %#v", channel.calls)
+	calls := channel.callsSnapshot()
+	if calls[0].action != "send_private_msg" || calls[1].action != "send_private_msg" || calls[2].action != "send_group_forward_msg" {
+		t.Fatalf("calls = %#v", calls)
 	}
 }
 
@@ -3932,13 +3947,22 @@ func recordedCallsByAction(calls []recordingAPICall, action string) []recordingA
 }
 
 type recordingLocalMediaSharer struct {
+	mu    sync.Mutex
 	url   string
 	paths []string
 }
 
 func (s *recordingLocalMediaSharer) Share(path string, ttl time.Duration) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.paths = append(s.paths, path)
 	return s.url, s.url != ""
+}
+
+func (s *recordingLocalMediaSharer) pathsSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.paths...)
 }
 
 type memoryMessageHistoryStore struct {
@@ -4035,23 +4059,61 @@ func (c *recordingChannel) Status() ChannelStatus { return ChannelStatus{} }
 // Close 释放当前对象持有的资源。
 func (c *recordingChannel) Close() error { return nil }
 
+func (c *recordingChannel) sentSnapshot() []OutgoingMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]OutgoingMessage(nil), c.sent...)
+}
+
+func (c *recordingChannel) callsSnapshot() []recordingAPICall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]recordingAPICall(nil), c.calls...)
+}
+
 type capturingLLMProvider struct {
+	mu      sync.Mutex
 	reply   string
 	request llm.GenerateRequest
 }
 
 // Generate 记录请求并返回固定回复。
 func (p *capturingLLMProvider) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
-	p.request = req
+	p.mu.Lock()
+	p.request = cloneGenerateRequestForTest(req)
+	p.mu.Unlock()
 	return &llm.GenerateResponse{Provider: llm.ProviderOpenAICompatible, Model: "test", Text: p.reply}, nil
 }
 
+func (p *capturingLLMProvider) requestSnapshot() llm.GenerateRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return cloneGenerateRequestForTest(p.request)
+}
+
+func cloneGenerateRequestForTest(req llm.GenerateRequest) llm.GenerateRequest {
+	cloned := req
+	cloned.Messages = make([]llm.Message, len(req.Messages))
+	for index, message := range req.Messages {
+		cloned.Messages[index] = message
+		cloned.Messages[index].Parts = append([]llm.ContentPart(nil), message.Parts...)
+	}
+	if req.Temperature != nil {
+		temperature := *req.Temperature
+		cloned.Temperature = &temperature
+	}
+	return cloned
+}
+
 type sequenceLLMProvider struct {
+	mu       sync.Mutex
 	replies  []string
 	requests []llm.GenerateRequest
 }
 
 func (p *sequenceLLMProvider) Generate(ctx context.Context, req llm.GenerateRequest) (*llm.GenerateResponse, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.requests = append(p.requests, req)
 	if len(p.replies) == 0 {
 		return &llm.GenerateResponse{Provider: llm.ProviderOpenAICompatible, Model: "test"}, nil
@@ -4059,6 +4121,12 @@ func (p *sequenceLLMProvider) Generate(ctx context.Context, req llm.GenerateRequ
 	reply := p.replies[0]
 	p.replies = p.replies[1:]
 	return &llm.GenerateResponse{Provider: llm.ProviderOpenAICompatible, Model: "test", Text: reply}, nil
+}
+
+func (p *sequenceLLMProvider) requestsSnapshot() []llm.GenerateRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]llm.GenerateRequest(nil), p.requests...)
 }
 
 type failingLLMProvider struct {

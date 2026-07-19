@@ -14,6 +14,8 @@ type geminiClient struct {
 	client *genai.Client
 }
 
+const maxGeminiOutputTokens = int64(1<<31 - 1)
+
 // newGeminiClient 创建 Gemini provider 客户端。
 func newGeminiClient(cfg ProviderConfig, httpClient *http.Client) (*geminiClient, error) {
 	httpOptions := genai.HTTPOptions{}
@@ -60,7 +62,11 @@ func (c *geminiClient) Generate(ctx context.Context, req GenerateRequest) (*Gene
 		config.Temperature = &temperature
 	}
 	if req.MaxOutputTokens > 0 {
-		config.MaxOutputTokens = int32(req.MaxOutputTokens)
+		maxOutputTokens, err := geminiOutputTokenLimit(req.MaxOutputTokens)
+		if err != nil {
+			return nil, err
+		}
+		config.MaxOutputTokens = maxOutputTokens
 	}
 
 	resp, err := c.client.Models.GenerateContent(ctx, req.Model, geminiContents(messages), config)
@@ -83,6 +89,13 @@ func (c *geminiClient) Generate(ctx context.Context, req GenerateRequest) (*Gene
 			TotalTokens:  int64(resp.UsageMetadata.TotalTokenCount),
 		},
 	}, nil
+}
+
+func geminiOutputTokenLimit(value int64) (int32, error) {
+	if value < 0 || value > maxGeminiOutputTokens {
+		return 0, fmt.Errorf("llm: Gemini max_output_tokens must be between 0 and %d", maxGeminiOutputTokens)
+	}
+	return int32(value), nil
 }
 
 // geminiContents 将通用消息转换为 Gemini content。

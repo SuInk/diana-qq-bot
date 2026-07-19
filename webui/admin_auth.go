@@ -3,8 +3,11 @@ package webui
 import (
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"regexp"
 	"sort"
@@ -28,6 +31,7 @@ const (
 	adminLoginWindow             = 5 * time.Minute
 	adminLoginBlock              = 15 * time.Minute
 	adminLoginMaxFailures        = 5
+	maxAdminAuthRequestBytes     = 64 << 10
 	adminAuthSessionContextKey   = "diana.admin.session_id"
 	adminAuthMethodContextKey    = "diana.admin.auth_method"
 )
@@ -43,6 +47,7 @@ type AdminAuthConfig struct {
 	SessionTTL       time.Duration
 	SessionStorePath string
 	CredentialPath   string
+	SecureCookies    bool
 }
 
 // AdminAuth protects the WebUI and management APIs without affecting OneBot traffic.
@@ -58,6 +63,7 @@ type AdminAuth struct {
 	accountID        string
 	email            string
 	passwordHash     string
+	secureCookies    bool
 
 	mu       sync.Mutex
 	sessions map[string]adminSession
@@ -82,6 +88,7 @@ type adminSetupPayload struct {
 	Email           string `json:"email"`
 	Password        string `json:"password"`
 	PasswordConfirm string `json:"password_confirm"`
+	BootstrapToken  string `json:"bootstrap_token,omitempty"`
 }
 
 type adminAccountPayload struct {
@@ -152,6 +159,7 @@ func NewAdminAuth(cfg AdminAuthConfig) (*AdminAuth, error) {
 		accountID:        credential.AccountID,
 		email:            credential.Email,
 		passwordHash:     credential.PasswordHash,
+		secureCookies:    cfg.SecureCookies,
 		sessions:         sessions,
 		attempts:         map[string]adminLoginAttempt{},
 		now:              time.Now,
@@ -280,7 +288,9 @@ func (a *AdminAuth) status(c *gin.Context) {
 		"setup_required": a.Enabled() && !configured,
 		"authenticated":  authenticated,
 		"login_page":     secureEqual(candidatePath, a.loginPath),
-		"login_path":     a.loginPath,
+	}
+	if authenticated || secureEqual(candidatePath, a.loginPath) {
+		response["login_path"] = a.loginPath
 	}
 	if authenticated && configured {
 		response["email"] = email
@@ -307,7 +317,7 @@ func (a *AdminAuth) login(c *gin.Context) {
 		return
 	}
 	var payload adminLoginPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := bindAdminJSON(c, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -341,8 +351,12 @@ func (a *AdminAuth) setup(c *gin.Context) {
 		return
 	}
 	var payload adminSetupPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := bindAdminJSON(c, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	if !a.setupRequestAuthorized(c, payload.BootstrapToken) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "initial setup requires a local connection or bootstrap token"})
 		return
 	}
 	if payload.Password != payload.PasswordConfirm {
@@ -501,7 +515,7 @@ func (a *AdminAuth) revokeOtherSessions(c *gin.Context) {
 func (a *AdminAuth) updateAccount(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	var payload adminAccountPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := bindAdminJSON(c, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -520,7 +534,7 @@ func (a *AdminAuth) updateAccount(c *gin.Context) {
 func (a *AdminAuth) changePassword(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 	var payload adminPasswordPayload
-	if err := c.ShouldBindJSON(&payload); err != nil {
+	if err := bindAdminJSON(c, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
@@ -629,6 +643,72 @@ func (a *AdminAuth) writeCredentialUpdateError(c *gin.Context, err error) {
 
 func (a *AdminAuth) validLoginPathHeader(c *gin.Context) bool {
 	return secureEqual(strings.TrimSpace(c.GetHeader("X-Diana-Login-Path")), a.loginPath)
+}
+
+func (a *AdminAuth) setupRequestAuthorized(c *gin.Context, payloadToken string) bool {
+	if requestIsDirectLoopback(c.Request) {
+		return true
+	}
+	if a.apiToken == "" {
+		return false
+	}
+	for _, candidate := range []string{
+		payloadToken,
+		c.GetHeader("X-Diana-Bootstrap-Token"),
+		bearerAdminToken(c.GetHeader("Authorization")),
+	} {
+		if secureEqual(strings.TrimSpace(candidate), a.apiToken) {
+			return true
+		}
+	}
+	return false
+}
+
+func requestIsDirectLoopback(request *http.Request) bool {
+	if request == nil || !remoteAddressIsLoopback(request.RemoteAddr) {
+		return false
+	}
+	host := strings.TrimSpace(request.Host)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func remoteAddressIsLoopback(remoteAddr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr))
+	if err != nil {
+		host = strings.Trim(strings.TrimSpace(remoteAddr), "[]")
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func bearerAdminToken(value string) string {
+	scheme, token, ok := strings.Cut(strings.TrimSpace(value), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func bindAdminJSON(c *gin.Context, target any) error {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAdminAuthRequestBytes)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("request body must contain one JSON value")
+	}
+	return nil
 }
 
 func (a *AdminAuth) validLoginPayload(payload adminLoginPayload) (string, bool) {
@@ -830,7 +910,7 @@ func (a *AdminAuth) rotateSessionTokensLocked(session adminSession, now time.Tim
 
 func (a *AdminAuth) setAuthCookies(c *gin.Context, accessToken string, accessExpiry time.Time, refreshToken string, refreshExpiry time.Time) {
 	c.SetSameSite(http.SameSiteStrictMode)
-	secure := c.Request.TLS != nil
+	secure := a.secureCookies || c.Request.TLS != nil
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     adminAccessCookieName,
 		Value:    accessToken,
@@ -851,24 +931,24 @@ func (a *AdminAuth) setAuthCookies(c *gin.Context, accessToken string, accessExp
 		Secure:   secure,
 		SameSite: http.SameSiteStrictMode,
 	})
-	clearCookie(c, adminLegacySessionCookieName, "/")
+	a.clearCookie(c, adminLegacySessionCookieName, "/")
 }
 
 func (a *AdminAuth) clearAuthCookies(c *gin.Context) {
 	c.SetSameSite(http.SameSiteStrictMode)
-	clearCookie(c, adminAccessCookieName, "/")
-	clearCookie(c, adminRefreshCookieName, "/api/auth")
-	clearCookie(c, adminLegacySessionCookieName, "/")
+	a.clearCookie(c, adminAccessCookieName, "/")
+	a.clearCookie(c, adminRefreshCookieName, "/api/auth")
+	a.clearCookie(c, adminLegacySessionCookieName, "/")
 }
 
-func clearCookie(c *gin.Context, name, path string) {
+func (a *AdminAuth) clearCookie(c *gin.Context, name, path string) {
 	http.SetCookie(c.Writer, &http.Cookie{
 		Name:     name,
 		Value:    "",
 		Path:     path,
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   c.Request.TLS != nil,
+		Secure:   a.secureCookies || c.Request.TLS != nil,
 		SameSite: http.SameSiteStrictMode,
 	})
 }

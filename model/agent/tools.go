@@ -55,12 +55,14 @@ func NewDefaultToolRegistry(cfg Config) (*ToolRegistry, error) {
 	// 默认工具都绑定到同一个绝对工作目录，后续 safePath 负责防逃逸校验。
 	registry.Register(&ListFilesTool{root: root, limit: cfg.ListDirectoryLimit})
 	registry.Register(&ReadFileTool{root: root, maxBytes: cfg.ReadFileMaxBytes})
-	registry.Register(&RunCommandTool{
-		root:      root,
-		allowlist: commandAllowlistSet(cfg.CommandAllowlist),
-		timeout:   time.Duration(cfg.CommandTimeoutMS) * time.Millisecond,
-		maxBytes:  cfg.MaxToolOutputChars,
-	})
+	if len(cfg.CommandAllowlist) > 0 {
+		registry.Register(&RunCommandTool{
+			root:      root,
+			allowlist: commandAllowlistSet(cfg.CommandAllowlist),
+			timeout:   time.Duration(cfg.CommandTimeoutMS) * time.Millisecond,
+			maxBytes:  cfg.MaxToolOutputChars,
+		})
+	}
 	registry.Register(&WebSearchTool{
 		timeout:    defaultWebSearchTimeout,
 		maxBytes:   cfg.MaxToolOutputChars,
@@ -577,7 +579,45 @@ func safePath(root, rel string) (string, error) {
 		// filepath.Clean 后再 Rel 校验，阻止 ../ 逃出 Agent 工作目录。
 		return "", errors.New("path escapes agent workdir")
 	}
+	resolvedRoot, err := filepath.EvalSymlinks(cleanRoot)
+	if err != nil {
+		return "", err
+	}
+	resolvedCandidate, err := evalSymlinksAllowMissing(candidate)
+	if err != nil {
+		return "", err
+	}
+	relation, err = filepath.Rel(resolvedRoot, resolvedCandidate)
+	if err != nil {
+		return "", err
+	}
+	if relation == ".." || strings.HasPrefix(relation, ".."+string(filepath.Separator)) {
+		return "", errors.New("path resolves outside agent workdir")
+	}
 	return candidate, nil
+}
+
+func evalSymlinksAllowMissing(path string) (string, error) {
+	current := path
+	missing := make([]string, 0, 4)
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 // stringFromInput 从工具输入中读取字符串字段。

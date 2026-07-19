@@ -24,6 +24,7 @@ type AdminAccessConfig struct {
 	SessionsPath    string
 	SettingsPath    string
 	CredentialsPath string
+	SecureCookies   bool
 }
 
 // AdminAccessSettings is the authenticated WebUI representation of the entry settings.
@@ -57,6 +58,7 @@ type AdminAccess struct {
 	sessionsPath    string
 	settingsPath    string
 	credentialsPath string
+	secureCookies   bool
 	settings        AdminAccessSettings
 }
 
@@ -68,6 +70,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 		sessionsPath:    strings.TrimSpace(cfg.SessionsPath),
 		settingsPath:    strings.TrimSpace(cfg.SettingsPath),
 		credentialsPath: strings.TrimSpace(cfg.CredentialsPath),
+		secureCookies:   cfg.SecureCookies,
 	}
 	if access.sessionsPath == "" {
 		sourcePath := access.credentialsPath
@@ -113,7 +116,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 		}
 	}
 
-	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL, access.sessionsPath, access.credentialsPath)
+	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL, access.sessionsPath, access.credentialsPath, access.secureCookies)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +136,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 	return access, nil
 }
 
-func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, sessionsPath, credentialsPath string) (*AdminAuth, error) {
+func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, sessionsPath, credentialsPath string, secureCookies bool) (*AdminAuth, error) {
 	path, err := normalizeAdminAccessPath(path, token)
 	if err != nil {
 		return nil, err
@@ -145,6 +148,7 @@ func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, 
 		SessionTTL:       sessionTTL,
 		SessionStorePath: sessionsPath,
 		CredentialPath:   credentialsPath,
+		SecureCookies:    secureCookies,
 	})
 	if err != nil {
 		return nil, err
@@ -309,7 +313,7 @@ func (a *AdminAccess) updateSettings(c *gin.Context) {
 			}
 		}
 	}
-	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL, a.sessionsPath, a.credentialsPath)
+	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL, a.sessionsPath, a.credentialsPath, a.secureCookies)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

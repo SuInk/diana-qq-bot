@@ -267,7 +267,7 @@ func safeHistoryPart(value string) string {
 	}
 	var builder strings.Builder
 	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' || r == '.' {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
 			builder.WriteRune(r)
 		} else {
 			builder.WriteByte('_')

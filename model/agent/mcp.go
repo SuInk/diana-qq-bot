@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -510,7 +510,7 @@ func mcpModelToolName(server, tool string) string {
 	if len(name) <= 64 {
 		return name
 	}
-	sum := sha1.Sum([]byte(name))
+	sum := sha256.Sum256([]byte(name))
 	suffix := "_" + hex.EncodeToString(sum[:])[:8]
 	limit := 64 - len(suffix)
 	if limit < 1 {
@@ -526,7 +526,7 @@ func uniqueMCPModelToolName(server, tool string, used map[string]bool) string {
 		return base
 	}
 	for i := 1; ; i++ {
-		sum := sha1.Sum([]byte(fmt.Sprintf("%s\000%s\000%d", server, tool, i)))
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s\000%s\000%d", server, tool, i)))
 		suffix := "_" + hex.EncodeToString(sum[:])[:8]
 		limit := 64 - len(suffix)
 		candidate := base

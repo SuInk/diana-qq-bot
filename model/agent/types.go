@@ -158,9 +158,6 @@ func (cfg Config) WithDefaults() Config {
 	if cfg.CommandTimeoutMS > MaxAllowedCommandTimeoutMS {
 		cfg.CommandTimeoutMS = MaxAllowedCommandTimeoutMS
 	}
-	if len(cfg.CommandAllowlist) == 0 {
-		cfg.CommandAllowlist = defaultCommandAllowlist()
-	}
 	cfg.CommandAllowlist = cleanStringList(cfg.CommandAllowlist)
 	if cfg.BrowserTimeoutMS <= 0 {
 		cfg.BrowserTimeoutMS = DefaultBrowserTimeoutMS
@@ -198,14 +195,6 @@ func (cfg Config) WithDefaults() Config {
 
 func defaultMCPConfigPath(workDir string) string {
 	return filepath.Join(workDir, ".mcp.json")
-}
-
-func defaultCommandAllowlist() []string {
-	return []string{
-		"awk", "cat", "echo", "find", "git", "go", "grep", "ls", "make",
-		"node", "npm", "npx", "pip", "pip3", "pwd", "python", "python3",
-		"rg", "sed",
-	}
 }
 
 func cleanStringList(values []string) []string {

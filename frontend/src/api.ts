@@ -422,7 +422,7 @@ export interface AdminAuthStatus {
   setup_required: boolean;
   authenticated: boolean;
   login_page: boolean;
-  login_path: string;
+  login_path?: string;
   email?: string;
   username?: string;
 }
@@ -510,11 +510,11 @@ export function loginAdmin(email: string, password: string, loginPath: string): 
   });
 }
 
-export function setupAdmin(email: string, password: string, passwordConfirm: string, loginPath: string): Promise<AdminAuthResult> {
+export function setupAdmin(email: string, password: string, passwordConfirm: string, loginPath: string, bootstrapToken = ""): Promise<AdminAuthResult> {
   return requestJSON("/api/auth/setup", {
     method: "POST",
     headers: { "X-Diana-Login-Path": loginPath },
-    body: JSON.stringify({ email, password, password_confirm: passwordConfirm })
+    body: JSON.stringify({ email, password, password_confirm: passwordConfirm, bootstrap_token: bootstrapToken || undefined })
   });
 }
 
