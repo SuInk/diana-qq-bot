@@ -62,6 +62,197 @@ button {
   cursor: pointer;
 }
 
+.admin-login-page {
+  min-height: 100vh;
+  padding: clamp(24px, 5vw, 72px);
+  background:
+    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--primary), transparent 72%), transparent 34%),
+    linear-gradient(135deg, var(--bg), var(--panel-soft));
+  color: var(--text);
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 420px);
+  align-items: center;
+  gap: clamp(28px, 6vw, 88px);
+}
+
+.admin-login-brand {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 22px;
+}
+
+.admin-login-mark,
+.admin-login-key {
+  border: 1px solid var(--line);
+  background: var(--control);
+  color: var(--primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-login-mark {
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  box-shadow: 0 16px 36px var(--chip-shadow);
+}
+
+.admin-login-kicker {
+  margin: 0 0 8px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.admin-login-brand h1 {
+  margin: 0;
+  max-width: 620px;
+  font-size: clamp(40px, 7vw, 72px);
+  line-height: 1;
+  font-weight: 920;
+}
+
+.admin-login-status {
+  width: fit-content;
+  min-height: 40px;
+  border: 1px solid var(--ok-line);
+  border-radius: 999px;
+  padding: 0 14px;
+  background: var(--ok-bg);
+  color: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 820;
+}
+
+.admin-login-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--panel), transparent 4%);
+  box-shadow: 0 22px 72px var(--chip-shadow);
+  overflow: hidden;
+}
+
+.admin-login-form {
+  padding: clamp(22px, 4vw, 34px);
+  display: grid;
+  gap: 18px;
+}
+
+.admin-login-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-login-key {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+}
+
+.admin-login-heading h2,
+.admin-login-heading p {
+  margin: 0;
+}
+
+.admin-login-heading h2 {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.admin-login-heading p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 720;
+}
+
+.admin-token-field {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.admin-token-input {
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid var(--input-line);
+  border-radius: 10px;
+  background: var(--control);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+}
+
+.admin-token-input:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus), transparent 82%);
+}
+
+.admin-token-input input {
+  min-width: 0;
+  width: 100%;
+  height: 48px;
+  border: 0;
+  outline: 0;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--field-text);
+  font-weight: 760;
+}
+
+.admin-token-input button {
+  width: 44px;
+  height: 48px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-login-error {
+  margin: 0;
+  border: 1px solid var(--bad-line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bad-bg);
+  color: var(--bad);
+  font-weight: 760;
+}
+
+.admin-login-submit {
+  min-height: 48px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 18px;
+  background: var(--primary);
+  color: var(--primary-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 900;
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--primary), transparent 68%);
+}
+
+.admin-login-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  box-shadow: none;
+}
+
 .app-shell {
   min-height: 100vh;
   background: var(--bg);
