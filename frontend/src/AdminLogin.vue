@@ -19,16 +19,16 @@
         <div class="admin-login-heading">
           <div class="admin-login-key"><KeyRound :size="19" aria-hidden="true" /></div>
           <div>
-            <h2 id="admin-login-title">管理员登录</h2>
-            <p>输入账号和密码</p>
+            <h2 id="admin-login-title">{{ setupRequired ? "设置管理员" : "管理员登录" }}</h2>
+            <p>{{ setupRequired ? "首次使用，请设置邮箱和密码" : "输入邮箱和密码" }}</p>
           </div>
         </div>
 
         <label class="admin-token-field">
-          <span>账号</span>
+          <span>邮箱</span>
           <div class="admin-token-input">
             <input
-              v-model.trim="username"
+              v-model.trim="email"
               type="email"
               autocomplete="username"
               autofocus
@@ -44,7 +44,21 @@
             <input
               v-model="password"
               :type="showPassword ? 'text' : 'password'"
-              autocomplete="current-password"
+              :autocomplete="setupRequired ? 'new-password' : 'current-password'"
+              :minlength="setupRequired ? 12 : undefined"
+              required
+              aria-describedby="admin-login-error"
+            />
+          </div>
+        </label>
+
+        <label v-if="setupRequired" class="admin-token-field">
+          <span>确认密码</span>
+          <div class="admin-token-input">
+            <input
+              v-model="passwordConfirm"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="new-password"
               required
               aria-describedby="admin-login-error"
             />
@@ -57,10 +71,10 @@
 
         <p v-if="error" id="admin-login-error" class="admin-login-error" role="alert">{{ error }}</p>
 
-        <button class="admin-login-submit" type="submit" :disabled="submitting || !username.trim() || !password.trim()">
+        <button class="admin-login-submit" type="submit" :disabled="submitDisabled">
           <LoaderCircle v-if="submitting" class="spin" :size="18" aria-hidden="true" />
           <LogIn v-else :size="18" aria-hidden="true" />
-          <span>{{ submitting ? "验证中" : "进入后台" }}</span>
+          <span>{{ submitting ? (setupRequired ? "创建中" : "验证中") : (setupRequired ? "创建并进入后台" : "进入后台") }}</span>
         </button>
       </form>
     </section>
@@ -68,16 +82,22 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { BotMessageSquare, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, ShieldCheck } from "@lucide/vue";
-import { getAdminAuthStatus, loginAdmin, rememberAdminLoginPath } from "./api";
+import { getAdminAuthStatus, loginAdmin, rememberAdminLoginPath, setupAdmin } from "./api";
 
-const username = ref("admin@diana.local");
+const email = ref("");
 const password = ref("");
+const passwordConfirm = ref("");
 const showPassword = ref(false);
 const submitting = ref(false);
+const setupRequired = ref(false);
 const error = ref("");
 const loginPath = window.location.pathname.replace(/\/+$/, "") || "/";
+const submitDisabled = computed(() => {
+  if (submitting.value || !email.value.trim() || !password.value) return true;
+  return setupRequired.value && (!passwordConfirm.value || password.value !== passwordConfirm.value);
+});
 
 onMounted(async () => {
   try {
@@ -86,9 +106,7 @@ onMounted(async () => {
       window.location.replace("/");
       return;
     }
-    if (status.username) {
-      username.value = status.username;
-    }
+    setupRequired.value = status.setup_required;
     if (!status.configured || status.authenticated) {
       window.location.replace("/console");
     }
@@ -98,11 +116,15 @@ onMounted(async () => {
 });
 
 async function submit(): Promise<void> {
-  if (submitting.value || !username.value.trim() || !password.value.trim()) return;
+  if (submitDisabled.value) return;
   submitting.value = true;
   error.value = "";
   try {
-    await loginAdmin(username.value.trim(), password.value.trim(), loginPath);
+    if (setupRequired.value) {
+      await setupAdmin(email.value.trim(), password.value, passwordConfirm.value, loginPath);
+    } else {
+      await loginAdmin(email.value.trim(), password.value, loginPath);
+    }
     rememberAdminLoginPath(loginPath);
     window.location.replace("/console");
   } catch (err) {

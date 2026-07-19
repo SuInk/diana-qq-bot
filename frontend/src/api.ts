@@ -418,9 +418,11 @@ export interface NapCatLoginStatus {
 
 export interface AdminAuthStatus {
   configured: boolean;
+  setup_required: boolean;
   authenticated: boolean;
   login_page: boolean;
   login_path: string;
+  email?: string;
   username?: string;
 }
 
@@ -432,9 +434,31 @@ export interface AdminAccessSettings {
   managed_by_environment: boolean;
 }
 
-const adminLoginPathStorageKey = "diana_admin_login_path";
+export interface AdminAuthSession {
+  id: string;
+  device_name: string;
+  user_agent?: string;
+  ip_address?: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  current: boolean;
+}
 
-async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
+export interface AdminAuthSessionsResponse {
+  sessions: AdminAuthSession[];
+}
+
+export interface AdminAuthResult {
+  authenticated: boolean;
+  access_expires_at?: string;
+  refresh_expires_at?: string;
+}
+
+const adminLoginPathStorageKey = "diana_admin_login_path";
+let adminRefreshPromise: Promise<boolean> | null = null;
+
+async function requestJSON<T>(url: string, init?: RequestInit, allowRefresh = true): Promise<T> {
   const response = await fetch(url, {
     ...init,
     credentials: "same-origin",
@@ -445,7 +469,11 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const data = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (!response.ok) {
-    if (response.status === 401 && !url.startsWith("/api/auth/")) {
+    if (response.status === 401 && allowRefresh && !url.startsWith("/api/auth/")) {
+      const refreshed = await refreshAdminSession();
+      if (refreshed) {
+        return requestJSON<T>(url, init, false);
+      }
       window.location.replace(rememberedAdminLoginPath() || "/login");
     }
     throw new Error(data.error || `HTTP ${response.status}`);
@@ -453,16 +481,44 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
   return data;
 }
 
+async function refreshAdminSession(): Promise<boolean> {
+  if (!adminRefreshPromise) {
+    adminRefreshPromise = fetch("/api/auth/refresh", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" }
+    })
+      .then((response) => response.ok)
+      .catch(() => false)
+      .finally(() => {
+        adminRefreshPromise = null;
+      });
+  }
+  return adminRefreshPromise;
+}
+
 export function getAdminAuthStatus(path = window.location.pathname): Promise<AdminAuthStatus> {
   return requestJSON<AdminAuthStatus>(`/api/auth/status?path=${encodeURIComponent(path)}`);
 }
 
-export function loginAdmin(username: string, password: string, loginPath: string): Promise<{ authenticated: boolean; expires_at?: string }> {
+export function loginAdmin(email: string, password: string, loginPath: string): Promise<AdminAuthResult> {
   return requestJSON("/api/auth/login", {
     method: "POST",
     headers: { "X-Diana-Login-Path": loginPath },
-    body: JSON.stringify({ username, password })
+    body: JSON.stringify({ email, password })
   });
+}
+
+export function setupAdmin(email: string, password: string, passwordConfirm: string, loginPath: string): Promise<AdminAuthResult> {
+  return requestJSON("/api/auth/setup", {
+    method: "POST",
+    headers: { "X-Diana-Login-Path": loginPath },
+    body: JSON.stringify({ email, password, password_confirm: passwordConfirm })
+  });
+}
+
+export function refreshAdmin(): Promise<AdminAuthResult> {
+  return requestJSON("/api/auth/refresh", { method: "POST" }, false);
 }
 
 export function logoutAdmin(): Promise<{ authenticated: boolean }> {
@@ -487,6 +543,36 @@ export function saveAdminAccessSettings(randomSuffixEnabled: boolean, regenerate
     body: JSON.stringify({
       random_suffix_enabled: randomSuffixEnabled,
       regenerate
+    })
+  });
+}
+
+export function listAdminSessions(): Promise<AdminAuthSessionsResponse> {
+  return requestJSON<AdminAuthSessionsResponse>("/api/auth/sessions");
+}
+
+export function revokeAdminSession(id: string): Promise<{ revoked: boolean; current: boolean }> {
+  return requestJSON(`/api/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function revokeOtherAdminSessions(): Promise<{ revoked: number }> {
+  return requestJSON("/api/auth/sessions/revoke-others", { method: "POST" });
+}
+
+export function updateAdminEmail(email: string, currentPassword: string): Promise<{ email: string }> {
+  return requestJSON("/api/auth/account", {
+    method: "PUT",
+    body: JSON.stringify({ email, current_password: currentPassword })
+  });
+}
+
+export function changeAdminPassword(currentPassword: string, newPassword: string, passwordConfirm: string): Promise<{ changed: boolean; other_sessions_revoked: boolean }> {
+  return requestJSON("/api/auth/password", {
+    method: "PUT",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+      password_confirm: passwordConfirm
     })
   });
 }

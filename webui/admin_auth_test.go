@@ -176,6 +176,7 @@ func newAdminAuthTestRouterWithStore(t *testing.T, sessionTTL time.Duration, sto
 	gin.SetMode(gin.TestMode)
 	auth, err := NewAdminAuth(AdminAuthConfig{
 		Token:            testAdminToken,
+		Username:         "owner@example.com",
 		LoginPath:        "/secret-admin-entry",
 		SessionTTL:       sessionTTL,
 		SessionStorePath: storePath,

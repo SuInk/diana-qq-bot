@@ -17,6 +17,7 @@ require (
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/tetratelabs/wazero v1.12.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.2
+	golang.org/x/crypto v0.51.0
 	golang.org/x/net v0.55.0
 	google.golang.org/genai v1.61.0
 	modernc.org/sqlite v1.53.0
@@ -73,7 +74,6 @@ require (
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/text v0.38.0 // indirect

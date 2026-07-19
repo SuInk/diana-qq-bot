@@ -60,7 +60,7 @@ docker compose up -d --build
 http://127.0.0.1:18080
 ```
 
-WebUI 默认从根路径 `/` 进入。配置管理员 Token 后，根路径直接显示登录页；登录后可在“访问设置”中按需启用随机登录后缀，入口会持久化并立即生效。
+WebUI 默认从根路径 `/` 进入。首次打开 `/login` 时必须由用户自行填写管理员邮箱和密码，项目不再提供或预填默认邮箱。浏览器使用 15 分钟 JWT access token 和 30 天轮换 refresh token；服务端保留 refresh token 哈希，因此可以在“访问设置”查看登录设备、吊销单个设备或退出其他设备。修改密码会立即吊销其他设备。`DIANA_ADMIN_TOKEN` 仍是独立的自动化 API 凭据，不会作为浏览器 Cookie 保存。
 
 NapCat 反向 WebSocket 连接宿主机暴露的地址：
 
@@ -331,9 +331,11 @@ Diana 会把 NapCat 收到的 OneBot 事件转发给 NoneBot sidecar；第三方
 | `LOG_PATH` | 空 | 日志文件路径；设置后同时输出到 stdout 和文件 |
 | `DIANA_LOG_PATH` | 空 | `LOG_PATH` 的兼容别名 |
 | `APP_DB_PATH` | `data/diana-qq-bot.db` | 本地 SQLite 配置数据库路径 |
-| `DIANA_ADMIN_TOKEN` | 空 | WebUI 管理员 Token，至少 32 字符；配置后根路径显示登录页 |
+| `DIANA_ADMIN_TOKEN` | 空 | 自动化管理 API 的静态 Bearer Token，至少 32 字符；浏览器登录不直接保存它 |
+| `DIANA_ADMIN_EMAIL` | 空 | 可选的环境变量初始化邮箱；默认留空并由用户在首次设置页填写 |
 | `DIANA_ADMIN_LOGIN_PATH` | 空 | 可选的环境变量托管登录路径；设置后 WebUI 不能修改随机后缀模式 |
 | `DIANA_ADMIN_AUTH_CONFIG_FILE` | SQLite 同目录下的 `admin-auth.json` | WebUI 随机登录后缀配置文件 |
+| `DIANA_ADMIN_CREDENTIALS_FILE` | SQLite 同目录下的 `admin-credentials.json` | 管理员邮箱、bcrypt 密码哈希和 JWT 签名密钥；文件权限为 `0600` |
 | `LLM_PROVIDER` | `openai_compatible` | LLM provider |
 | `LLM_API_KEY` | 空 | LLM API Key |
 | `LLM_BASE_URL` | 空 | OpenAI-compatible 自定义 Base URL |

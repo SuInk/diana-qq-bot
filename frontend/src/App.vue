@@ -2303,6 +2303,102 @@
         </div>
 
         <div class="access-settings-layout">
+          <section class="access-settings-surface" aria-labelledby="admin-account-title">
+            <div class="access-section-head">
+              <div>
+                <h3 id="admin-account-title">管理员账号</h3>
+                <span>{{ adminAccessSettings.username || "未设置邮箱" }}</span>
+              </div>
+              <UserRound :size="18" aria-hidden="true" />
+            </div>
+
+            <form class="access-form" @submit.prevent="onUpdateAdminEmail">
+              <label class="field">
+                <span>邮箱</span>
+                <input v-model.trim="adminAccountForm.email" type="email" autocomplete="username" required />
+              </label>
+              <label class="field">
+                <span>当前密码</span>
+                <input v-model="adminAccountForm.currentPassword" type="password" autocomplete="current-password" required />
+              </label>
+              <div class="actions access-settings-actions">
+                <button class="button primary" type="submit" :disabled="savingAdminAccount || !adminAccountForm.email || !adminAccountForm.currentPassword">
+                  <Save :size="16" aria-hidden="true" />
+                  <span>{{ savingAdminAccount ? "保存中" : "保存邮箱" }}</span>
+                </button>
+              </div>
+            </form>
+
+            <div class="access-divider" />
+
+            <form class="access-form" @submit.prevent="onChangeAdminPassword">
+              <div class="access-form-title">
+                <KeyRound :size="17" aria-hidden="true" />
+                <strong>修改密码</strong>
+              </div>
+              <div class="access-password-grid">
+                <label class="field">
+                  <span>当前密码</span>
+                  <input v-model="adminPasswordForm.currentPassword" type="password" autocomplete="current-password" required />
+                </label>
+                <label class="field">
+                  <span>新密码</span>
+                  <input v-model="adminPasswordForm.newPassword" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+                <label class="field">
+                  <span>确认新密码</span>
+                  <input v-model="adminPasswordForm.passwordConfirm" type="password" autocomplete="new-password" minlength="12" required />
+                </label>
+              </div>
+              <div class="actions access-settings-actions">
+                <button class="button primary" type="submit" :disabled="changingAdminPassword || !adminPasswordReady">
+                  <KeyRound :size="16" aria-hidden="true" />
+                  <span>{{ changingAdminPassword ? "修改中" : "修改密码" }}</span>
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section class="access-settings-surface" aria-labelledby="admin-sessions-title">
+            <div class="access-section-head">
+              <div>
+                <h3 id="admin-sessions-title">登录设备</h3>
+                <span>{{ adminSessions.length }} 个有效会话</span>
+              </div>
+              <button class="button" type="button" :disabled="loadingAdminSessions || Boolean(revokingAdminSession) || adminSessions.length <= 1" @click="onRevokeOtherAdminSessions">
+                <LogOut :size="16" aria-hidden="true" />
+                <span>退出其他设备</span>
+              </button>
+            </div>
+
+            <div v-if="loadingAdminSessions" class="access-empty-state">正在读取设备</div>
+            <div v-else-if="adminSessions.length === 0" class="access-empty-state">没有有效设备会话</div>
+            <div v-else class="access-session-list">
+              <article v-for="session in adminSessions" :key="session.id" class="access-session-row">
+                <div class="access-session-icon"><Monitor :size="18" aria-hidden="true" /></div>
+                <div class="access-session-main">
+                  <div>
+                    <strong>{{ session.device_name || "未知设备" }}</strong>
+                    <span v-if="session.current" class="access-current-badge">当前设备</span>
+                  </div>
+                  <span>{{ session.ip_address || "未知 IP" }} · 最近活动 {{ formatAdminSessionTime(session.last_seen_at) }}</span>
+                  <small>有效期至 {{ formatAdminSessionTime(session.expires_at) }}</small>
+                </div>
+                <button
+                  class="icon-button"
+                  type="button"
+                  :disabled="revokingAdminSession === session.id"
+                  :aria-label="session.current ? '退出当前设备' : '吊销设备登录'"
+                  :title="session.current ? '退出当前设备' : '吊销设备登录'"
+                  @click="onRevokeAdminSession(session)"
+                >
+                  <LogOut v-if="session.current" :size="16" aria-hidden="true" />
+                  <Trash2 v-else :size="16" aria-hidden="true" />
+                </button>
+              </article>
+            </div>
+          </section>
+
           <section class="access-settings-surface" aria-labelledby="admin-access-title">
             <div class="access-setting-row">
               <div>
@@ -2317,13 +2413,6 @@
                 />
                 <span />
               </label>
-            </div>
-
-            <div class="access-path-block">
-              <span>默认账号</span>
-              <div class="access-path-row">
-                <code>{{ adminAccessSettings.username || "admin@diana.local" }}</code>
-              </div>
             </div>
 
             <div class="access-path-block">
@@ -2631,9 +2720,11 @@ import {
   Image,
   Link2,
   ListChecks,
+  KeyRound,
   LogOut,
   MemoryStick,
   MessageCircle,
+  Monitor,
   MoreHorizontal,
   MoreVertical,
   PanelLeftOpen,
@@ -2659,6 +2750,7 @@ import {
   Trash2,
   TriangleAlert,
   Upload,
+  UserRound,
   Users,
   Wifi,
   Wrench,
@@ -2670,6 +2762,7 @@ import {
   cloneQQBotProfile,
   cloneConfigProfile,
   deleteQQBotProfile,
+  changeAdminPassword,
   exportConfig,
   getAdminAccessSettings,
   importConfigProfiles,
@@ -2685,12 +2778,15 @@ import {
   pullFromGitHub,
   installPlugin,
   listAppLogs,
+  listAdminSessions,
   listLLMModels,
   listQQBotTasks,
   listPlugins,
   logoutAdmin,
   getQQBotGroupAdminConfig,
   requestQQBotGroupAdminChallenge,
+  revokeAdminSession,
+  revokeOtherAdminSessions,
   saveConfig,
   saveAdminAccessSettings,
   saveWebSearchConfig,
@@ -2703,10 +2799,12 @@ import {
   stopQQBot,
   testLLM,
   testWebSearchProvider,
+  updateAdminEmail,
   uninstallPlugin,
   verifyQQBotGroupAdmin,
   rememberAdminLoginPath,
   type AdminAccessSettings,
+  type AdminAuthSession,
   type AppLogEntry,
   type AppLogKind,
   type AppLogLevel,
@@ -3337,12 +3435,19 @@ const groupAdmin = reactive<GroupAdminState>({
 const status = reactive({ text: "读取中", kind: "" });
 const adminAccessSettings = reactive<AdminAccessSettings>({
   configured: false,
-  username: "admin@diana.local",
+  username: "",
   random_suffix_enabled: false,
   login_path: "/login",
   managed_by_environment: false
 });
 const savingAdminAccess = ref(false);
+const adminSessions = ref<AdminAuthSession[]>([]);
+const loadingAdminSessions = ref(false);
+const revokingAdminSession = ref("");
+const savingAdminAccount = ref(false);
+const changingAdminPassword = ref(false);
+const adminAccountForm = reactive({ email: "", currentPassword: "" });
+const adminPasswordForm = reactive({ currentPassword: "", newPassword: "", passwordConfirm: "" });
 const savingLLM = ref(false);
 const loadingModels = ref(false);
 const testingProfileID = ref("");
@@ -3447,6 +3552,11 @@ const llmTestResult = reactive<LLMTestResultState>({
 });
 const activeLLMProfile = computed(() => llmProfiles.value.find((profile) => profile.id === llmActiveProfileID.value) || llmProfiles.value[0] || null);
 const adminLoginURL = computed(() => `${window.location.origin}${adminAccessSettings.login_path || "/"}`);
+const adminPasswordReady = computed(() =>
+  adminPasswordForm.currentPassword.length > 0 &&
+  adminPasswordForm.newPassword.length >= 12 &&
+  adminPasswordForm.newPassword === adminPasswordForm.passwordConfirm
+);
 const webSearchDirty = computed(() => webSearchConfigState(webSearchConfig) !== webSearchSavedState.value);
 
 function normalizedWebSearchProvider(provider: WebSearchProviderConfig): WebSearchProviderConfig {
@@ -4830,6 +4940,9 @@ function activateTab(tab: TabID): boolean {
   if (tab === "logs") {
     void refreshLogs(false);
   }
+  if (tab === "security") {
+    void refreshAdminSessions(false);
+  }
   return true;
 }
 
@@ -5588,6 +5701,101 @@ function editBotProfile(profile: QQBotConfig) {
 
 function applyAdminAccessSettings(settings: AdminAccessSettings) {
   Object.assign(adminAccessSettings, settings);
+  adminAccountForm.email = settings.username || "";
+}
+
+async function refreshAdminSessions(showStatus = true) {
+  loadingAdminSessions.value = true;
+  if (showStatus) setStatus("读取登录设备");
+  try {
+    const response = await listAdminSessions();
+    adminSessions.value = response.sessions || [];
+    if (showStatus) setStatus("登录设备已更新", "ok");
+  } catch (error) {
+    if (showStatus) setStatus("登录设备读取失败", "bad");
+    output.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    loadingAdminSessions.value = false;
+  }
+}
+
+async function onUpdateAdminEmail() {
+  if (savingAdminAccount.value || !adminAccountForm.email || !adminAccountForm.currentPassword) return;
+  savingAdminAccount.value = true;
+  setStatus("保存管理员邮箱");
+  try {
+    const result = await updateAdminEmail(adminAccountForm.email, adminAccountForm.currentPassword);
+    adminAccessSettings.username = result.email;
+    adminAccountForm.email = result.email;
+    adminAccountForm.currentPassword = "";
+    await refreshAdminSessions(false);
+    setStatus("管理员邮箱已更新", "ok");
+  } catch (error) {
+    setStatus("管理员邮箱保存失败", "bad");
+    output.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    savingAdminAccount.value = false;
+  }
+}
+
+async function onChangeAdminPassword() {
+  if (changingAdminPassword.value || !adminPasswordReady.value) return;
+  changingAdminPassword.value = true;
+  setStatus("修改管理员密码");
+  try {
+    await changeAdminPassword(adminPasswordForm.currentPassword, adminPasswordForm.newPassword, adminPasswordForm.passwordConfirm);
+    adminPasswordForm.currentPassword = "";
+    adminPasswordForm.newPassword = "";
+    adminPasswordForm.passwordConfirm = "";
+    await refreshAdminSessions(false);
+    setStatus("密码已修改，其他设备已退出", "ok");
+  } catch (error) {
+    setStatus("密码修改失败", "bad");
+    output.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    changingAdminPassword.value = false;
+  }
+}
+
+async function onRevokeAdminSession(session: AdminAuthSession) {
+  if (revokingAdminSession.value) return;
+  if (!window.confirm(session.current ? "退出当前设备？" : `吊销 ${session.device_name || "此设备"} 的登录？`)) return;
+  revokingAdminSession.value = session.id;
+  try {
+    const result = await revokeAdminSession(session.id);
+    if (result.current) {
+      rememberAdminLoginPath(adminAccessSettings.login_path || "/login");
+      window.location.replace(adminAccessSettings.login_path || "/login");
+      return;
+    }
+    await refreshAdminSessions(false);
+    setStatus("设备登录已吊销", "ok");
+  } catch (error) {
+    setStatus("设备吊销失败", "bad");
+    output.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    revokingAdminSession.value = "";
+  }
+}
+
+async function onRevokeOtherAdminSessions() {
+  if (revokingAdminSession.value || adminSessions.value.length <= 1) return;
+  if (!window.confirm("退出除当前设备外的所有登录？")) return;
+  revokingAdminSession.value = "others";
+  try {
+    const result = await revokeOtherAdminSessions();
+    await refreshAdminSessions(false);
+    setStatus(`已退出 ${result.revoked} 个设备`, "ok");
+  } catch (error) {
+    setStatus("其他设备退出失败", "bad");
+    output.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    revokingAdminSession.value = "";
+  }
+}
+
+function formatAdminSessionTime(value: string): string {
+  return formatLogTableTime(value);
 }
 
 async function onSaveAdminAccess(regenerate = false) {
@@ -5633,7 +5841,7 @@ async function onLogoutAdmin() {
 
 async function load() {
   try {
-    const [llmConfig, botConfig, statusPayload, pluginPayload, featurePayload, webSearchPayload, adminAccessPayload, logsPayload, taskPayload, statsPayload, autoInfoPayload] = await Promise.all([
+    const [llmConfig, botConfig, statusPayload, pluginPayload, featurePayload, webSearchPayload, adminAccessPayload, adminSessionsPayload, logsPayload, taskPayload, statsPayload, autoInfoPayload] = await Promise.all([
       getConfig(true),
       getQQBotConfig(),
       getQQBotStatus(),
@@ -5641,6 +5849,7 @@ async function load() {
       getQQBotFeatures().catch(() => ({ group_test: false })),
       getWebSearchConfig(),
       getAdminAccessSettings(),
+      listAdminSessions().catch(() => ({ sessions: [] })),
       listAppLogs(undefined, 10).catch(() => ({ logs: [] })),
       listQQBotTasks().catch(() => ({ items: [] })),
       getQQBotDashboardStats().catch(() => null),
@@ -5665,6 +5874,7 @@ async function load() {
     }
     applyWebSearchConfig(webSearchPayload);
     applyAdminAccessSettings(adminAccessPayload);
+    adminSessions.value = adminSessionsPayload.sessions || [];
     void refreshUpdateStatus(false);
     if (activeTab.value === "logs") {
       void refreshLogs(false);

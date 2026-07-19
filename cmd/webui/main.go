@@ -163,7 +163,7 @@ func main() {
 	}
 	adminAccess, err := webui.NewAdminAccess(webui.AdminAccessConfig{
 		Token:           envOrAny([]string{"DIANA_ADMIN_TOKEN", "ADMIN_TOKEN"}, ""),
-		Username:        envOr("DIANA_ADMIN_USERNAME", "admin@diana.local"),
+		Username:        envOrAny([]string{"DIANA_ADMIN_EMAIL", "DIANA_ADMIN_USERNAME"}, ""),
 		LoginPath:       os.Getenv("DIANA_ADMIN_LOGIN_PATH"),
 		SettingsPath:    envOr("DIANA_ADMIN_AUTH_CONFIG_FILE", filepath.Join(filepath.Dir(appDBPath), "admin-auth.json")),
 		CredentialsPath: envOr("DIANA_ADMIN_CREDENTIALS_FILE", filepath.Join(filepath.Dir(appDBPath), "admin-credentials.json")),
@@ -172,7 +172,11 @@ func main() {
 		log.Fatal(err)
 	}
 	if adminAccess.Enabled() {
-		log.Printf("admin authentication enabled; username: %s; login path: %s", adminAccess.Username(), adminAccess.LoginPath())
+		if adminAccess.Username() == "" {
+			log.Printf("admin authentication enabled; first-run setup required at: %s", adminAccess.LoginPath())
+		} else {
+			log.Printf("admin authentication enabled; login path: %s", adminAccess.LoginPath())
+		}
 	} else {
 		log.Printf("admin authentication disabled; set DIANA_ADMIN_TOKEN to protect the WebUI")
 	}

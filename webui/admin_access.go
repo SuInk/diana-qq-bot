@@ -35,11 +35,6 @@ type AdminAccessSettings struct {
 	ManagedByEnvironment bool   `json:"managed_by_environment"`
 }
 
-type persistedAdminCredential struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 type persistedAdminAccessSettings struct {
 	RandomSuffixEnabled bool   `json:"random_suffix_enabled"`
 	LoginPath           string `json:"login_path,omitempty"`
@@ -83,23 +78,8 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 			access.sessionsPath = filepath.Join(filepath.Dir(sourcePath), "admin-sessions.json")
 		}
 	}
-	if access.username == "" {
-		access.username = defaultAdminUsername
-	}
-	if access.token == "" {
-		token, username, err := loadOrCreateAdminCredential(access.credentialsPath, access.username)
-		if err != nil {
-			return nil, err
-		}
-		access.token = token
-		if strings.TrimSpace(username) != "" {
-			access.username = username
-		}
-	}
 	settings := AdminAccessSettings{
-		Configured: access.token != "",
-		Username:   access.username,
-		LoginPath:  defaultAdminLoginPath,
+		LoginPath: defaultAdminLoginPath,
 	}
 
 	environmentPath := strings.TrimSpace(cfg.LoginPath)
@@ -133,11 +113,13 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 		}
 	}
 
-	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL, access.sessionsPath)
+	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL, access.sessionsPath, access.credentialsPath)
 	if err != nil {
 		return nil, err
 	}
 	access.sessionTTL = auth.sessionTTL
+	settings.Configured = auth.AccountConfigured()
+	settings.Username = auth.Username()
 	access.settings = settings
 	access.auth.Store(auth)
 	if generated {
@@ -151,7 +133,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 	return access, nil
 }
 
-func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, sessionsPath string) (*AdminAuth, error) {
+func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, sessionsPath, credentialsPath string) (*AdminAuth, error) {
 	path, err := normalizeAdminAccessPath(path, token)
 	if err != nil {
 		return nil, err
@@ -162,79 +144,12 @@ func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, 
 		LoginPath:        path,
 		SessionTTL:       sessionTTL,
 		SessionStorePath: sessionsPath,
+		CredentialPath:   credentialsPath,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return auth, nil
-}
-
-func loadOrCreateAdminCredential(path, username string) (string, string, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		username = defaultAdminUsername
-	}
-	if strings.TrimSpace(path) == "" {
-		token, err := randomToken()
-		return token, username, err
-	}
-	body, err := os.ReadFile(path)
-	if err == nil {
-		var credential persistedAdminCredential
-		if err := json.Unmarshal(body, &credential); err != nil {
-			return "", "", fmt.Errorf("decode admin credentials: %w", err)
-		}
-		if strings.TrimSpace(credential.Password) == "" {
-			return "", "", fmt.Errorf("admin credentials password is empty")
-		}
-		if len(strings.TrimSpace(credential.Password)) < 32 {
-			return "", "", fmt.Errorf("admin credentials password must contain at least 32 characters")
-		}
-		if strings.TrimSpace(credential.Username) != "" {
-			username = strings.TrimSpace(credential.Username)
-		}
-		return strings.TrimSpace(credential.Password), username, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", "", fmt.Errorf("read admin credentials: %w", err)
-	}
-	password, err := randomToken()
-	if err != nil {
-		return "", "", err
-	}
-	if err := persistAdminCredential(path, persistedAdminCredential{Username: username, Password: password}); err != nil {
-		return "", "", err
-	}
-	return password, username, nil
-}
-
-func persistAdminCredential(path string, credential persistedAdminCredential) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create admin credentials directory: %w", err)
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".admin-credentials-*.json")
-	if err != nil {
-		return fmt.Errorf("create admin credentials: %w", err)
-	}
-	tempPath := file.Name()
-	defer os.Remove(tempPath)
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return err
-	}
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(credential); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("encode admin credentials: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close admin credentials: %w", err)
-	}
-	if err := os.Rename(tempPath, path); err != nil {
-		return fmt.Errorf("replace admin credentials: %w", err)
-	}
-	return nil
 }
 
 func normalizeAdminAccessPath(path, token string) (string, error) {
@@ -324,10 +239,10 @@ func (a *AdminAccess) LoginPath() string {
 }
 
 func (a *AdminAccess) Username() string {
-	if a == nil || strings.TrimSpace(a.username) == "" {
-		return defaultAdminUsername
+	if a == nil || a.current() == nil {
+		return ""
 	}
-	return a.username
+	return a.current().Username()
 }
 
 func (a *AdminAccess) Middleware() gin.HandlerFunc {
@@ -344,7 +259,14 @@ func (a *AdminAccess) Middleware() gin.HandlerFunc {
 func (a *AdminAccess) Register(router gin.IRouter) {
 	router.GET("/api/auth/status", func(c *gin.Context) { a.current().status(c) })
 	router.POST("/api/auth/login", func(c *gin.Context) { a.current().login(c) })
+	router.POST("/api/auth/setup", func(c *gin.Context) { a.current().setup(c) })
+	router.POST("/api/auth/refresh", func(c *gin.Context) { a.current().refresh(c) })
 	router.POST("/api/auth/logout", func(c *gin.Context) { a.current().logout(c) })
+	router.GET("/api/auth/sessions", func(c *gin.Context) { a.current().listSessions(c) })
+	router.DELETE("/api/auth/sessions/:id", func(c *gin.Context) { a.current().revokeSession(c) })
+	router.POST("/api/auth/sessions/revoke-others", func(c *gin.Context) { a.current().revokeOtherSessions(c) })
+	router.PUT("/api/auth/account", func(c *gin.Context) { a.current().updateAccount(c) })
+	router.PUT("/api/auth/password", func(c *gin.Context) { a.current().changePassword(c) })
 	router.GET("/api/auth/settings", a.getSettings)
 	router.PUT("/api/auth/settings", a.updateSettings)
 }
@@ -355,6 +277,8 @@ func (a *AdminAccess) getSettings(c *gin.Context) {
 	settings := a.settings
 	a.settingsMu.Unlock()
 	settings.LoginPath = a.LoginPath()
+	settings.Configured = a.current().AccountConfigured()
+	settings.Username = a.Username()
 	c.JSON(http.StatusOK, settings)
 }
 
@@ -385,7 +309,7 @@ func (a *AdminAccess) updateSettings(c *gin.Context) {
 			}
 		}
 	}
-	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL, a.sessionsPath)
+	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL, a.sessionsPath, a.credentialsPath)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -402,6 +326,8 @@ func (a *AdminAccess) updateSettings(c *gin.Context) {
 	preserveAdminAuthState(previous, nextAuth)
 	a.settings.RandomSuffixEnabled = payload.RandomSuffixEnabled
 	a.settings.LoginPath = loginPath
+	a.settings.Configured = nextAuth.AccountConfigured()
+	a.settings.Username = nextAuth.Username()
 	a.auth.Store(nextAuth)
 	c.JSON(http.StatusOK, a.settings)
 }
@@ -413,6 +339,9 @@ func preserveAdminAuthState(previous, next *AdminAuth) {
 	now := previous.now()
 	previous.mu.Lock()
 	previous.cleanupLocked(now)
+	next.email = previous.email
+	next.passwordHash = previous.passwordHash
+	next.accountID = previous.accountID
 	for sessionID, expiresAt := range previous.sessions {
 		next.sessions[sessionID] = expiresAt
 	}

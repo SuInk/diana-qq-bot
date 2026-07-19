@@ -129,7 +129,7 @@ func TestAdminAccessEnvironmentPathCannotBeChangedByWebUI(t *testing.T) {
 	}
 }
 
-func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
+func TestAdminAccessWithoutTokenRequiresFirstRunSetup(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	credentialsPath := filepath.Join(dir, "admin-credentials.json")
@@ -140,7 +140,7 @@ func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !access.Enabled() || access.LoginPath() != defaultAdminLoginPath || access.Username() != defaultAdminUsername {
+	if !access.Enabled() || access.LoginPath() != defaultAdminLoginPath || access.Username() != "" {
 		t.Fatalf("enabled=%v path=%q", access.Enabled(), access.LoginPath())
 	}
 	router := newAdminAccessTestRouter(t, access)
@@ -156,12 +156,28 @@ func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
 	if err := json.Unmarshal(body, &credential); err != nil {
 		t.Fatal(err)
 	}
-	login := performAdminAccessRequest(router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+credential.Username+`","password":"`+credential.Password+`"}`), map[string]string{
+	if credential.Email != "" || credential.PasswordHash != "" || len(credential.JWTSecret) < 32 || credential.Password != "" {
+		t.Fatalf("unexpected initial credential: %#v", credential)
+	}
+	status := performAdminAccessRequest(router, http.MethodGet, "/api/auth/status?path=/login", nil, nil)
+	var authStatus map[string]any
+	decodeAdminAccessResponse(t, status, &authStatus)
+	if authStatus["setup_required"] != true {
+		t.Fatalf("status = %#v", authStatus)
+	}
+	setup := performAdminAccessRequest(router, http.MethodPost, "/api/auth/setup", strings.NewReader(`{"email":"owner@example.com","password":"correct horse battery staple","password_confirm":"correct horse battery staple"}`), map[string]string{
 		"Content-Type":       "application/json",
 		"X-Diana-Login-Path": defaultAdminLoginPath,
 	})
-	if login.Code != http.StatusOK || len(login.Result().Cookies()) == 0 {
-		t.Fatalf("generated credential login = %d %s", login.Code, login.Body.String())
+	if setup.Code != http.StatusOK || len(setup.Result().Cookies()) < 2 || access.Username() != "owner@example.com" {
+		t.Fatalf("first-run setup = %d %s", setup.Code, setup.Body.String())
+	}
+	body, err = os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "correct horse battery staple") || strings.Contains(string(body), `"password":`) {
+		t.Fatalf("credential file contains plaintext password: %s", body)
 	}
 }
 

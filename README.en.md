@@ -65,7 +65,7 @@ After startup, open:
 http://127.0.0.1:18080${DIANA_ADMIN_LOGIN_PATH}
 ```
 
-`DIANA_ADMIN_TOKEN` must contain at least 32 characters and should be generated from a cryptographically secure source such as `openssl rand -hex 32`. Generate `DIANA_ADMIN_LOGIN_PATH` independently; it must be a single path segment containing at least 11 characters. When omitted, it is derived from the token and printed in the startup log. The token itself is never logged. With authentication enabled, unauthenticated requests to known console paths such as `/console` return 404. A successful login creates a 12-hour HttpOnly session cookie. Scripts can call management APIs with `Authorization: Bearer <DIANA_ADMIN_TOKEN>`.
+`DIANA_ADMIN_TOKEN` must contain at least 32 characters and should be generated from a cryptographically secure source such as `openssl rand -hex 32`. On the first visit to `/login`, the owner must enter their own administrator email and password; no default email is supplied or prefilled. Browser sessions use a 15-minute JWT access token and a rotating 30-day refresh token in HttpOnly cookies. Refresh hashes and device metadata are retained server-side so individual devices can be revoked immediately. Password changes revoke every other device. Scripts can still call management APIs with `Authorization: Bearer <DIANA_ADMIN_TOKEN>`.
 
 To log in to NapCat or switch quick-login accounts directly from Diana, attach both containers to the same Docker network, set `DIANA_NAPCAT_WEBUI_URL` to NapCat's internal WebUI address, and keep `DIANA_NAPCAT_WEBUI_TOKEN` equal to the strong random token in NapCat's `webui.json`. Diana uses this token only on the backend and never sends it to the browser.
 
@@ -323,8 +323,10 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | --- | --- | --- |
 | `HOST` | `127.0.0.1` | HTTP listen address; the Docker image explicitly uses `0.0.0.0` |
 | `PORT` | `18080` | WebUI and OneBot endpoint listen port |
-| `DIANA_ADMIN_TOKEN` | empty | WebUI management token; must be at least 32 characters and protects console pages and APIs when set |
-| `DIANA_ADMIN_LOGIN_PATH` | derived from token | Hidden login path; must be a single path segment containing at least 11 characters |
+| `DIANA_ADMIN_TOKEN` | empty | Static Bearer token for automated management API access; at least 32 characters |
+| `DIANA_ADMIN_EMAIL` | empty | Optional environment-provided initial email; leave empty to complete first-run setup in the browser |
+| `DIANA_ADMIN_LOGIN_PATH` | `/login` | Optional environment-managed hidden login path; one segment with at least 11 characters |
+| `DIANA_ADMIN_CREDENTIALS_FILE` | next to the SQLite database | Stores the email, bcrypt password hash, and JWT signing secret with mode `0600` |
 | `DIANA_NAPCAT_WEBUI_URL` | empty | Internal NapCat WebUI URL; enables login management when configured with the token |
 | `DIANA_NAPCAT_WEBUI_TOKEN` | empty | Strong NapCat WebUI token; retained only in the Diana backend environment |
 | `FRONTEND_DIST` | `frontend/dist` | Frontend build output directory |
