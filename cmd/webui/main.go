@@ -26,6 +26,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	buildSourceRoot string
+	buildCommit     string
+)
+
 // main 初始化存储、路由、机器人运行时并启动 WebUI 服务。
 func main() {
 	logWriter, closeLog := setupLogging()
@@ -77,7 +82,7 @@ func main() {
 	handler := webui.NewLLMConfigHandler(store)
 	handler.SetModelListFactory(modelListFactory)
 	handler.SetLogStore(sqliteStore)
-	systemUpdater, err := updater.NewGitUpdater(".")
+	systemUpdater, err := newSystemUpdater()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -195,6 +200,29 @@ func main() {
 	if err := router.RunListener(listener); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func newSystemUpdater() (*updater.GitUpdater, error) {
+	root := strings.TrimSpace(os.Getenv("DIANA_UPDATE_ROOT"))
+	if root == "" {
+		root = strings.TrimSpace(buildSourceRoot)
+	}
+	if root == "" {
+		root = "."
+	}
+
+	runningExecutable, _ := os.Executable()
+	options := updater.Options{
+		RunningCommit:     buildCommit,
+		RunningExecutable: runningExecutable,
+	}
+	applyScript := filepath.Join(root, "scripts", "apply-update.sh")
+	if runtime.GOOS != "windows" && boolFromEnv("DIANA_UPDATE_APPLY_ENABLED", true) {
+		if info, statErr := os.Stat(applyScript); statErr == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			options.ApplyCommand = []string{applyScript}
+		}
+	}
+	return updater.NewGitUpdaterWithOptions(root, options)
 }
 
 func probeMacOSQQAppDataAccess() {

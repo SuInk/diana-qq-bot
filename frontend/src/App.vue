@@ -20,7 +20,7 @@
               @click="toggleUpdateDrawer"
             >
               <span>v{{ appVersion }}</span>
-              <span v-if="systemHasUpdate" class="brand-update-count">{{ updateStatus?.behind ?? 0 }}</span>
+              <span v-if="systemHasUpdate" class="brand-update-count">{{ (updateStatus?.behind ?? 0) > 0 ? updateStatus?.behind : "!" }}</span>
             </button>
           </div>
         </div>
@@ -2527,7 +2527,7 @@
           <div class="update-drawer-head">
             <div>
               <p class="eyebrow">Update</p>
-              <h2 id="update-drawer-title">版本更新说明</h2>
+              <h2 id="update-drawer-title">系统升级</h2>
             </div>
             <button class="button" type="button" @click="closeUpdateDrawer">
               <ChevronLeft :size="16" aria-hidden="true" />
@@ -2536,10 +2536,29 @@
           </div>
 
           <div class="update-drawer-body compact">
+            <div class="update-state" :class="systemUpdateTone">
+              <RefreshCw v-if="updatingSystem || loadingUpdateStatus || updateStatus?.updating" :size="18" class="update-spin" aria-hidden="true" />
+              <CheckCircle2 v-else-if="updateStatus?.restart_required" :size="18" aria-hidden="true" />
+              <TriangleAlert v-else-if="systemUpdateTone === 'warning' || systemUpdateTone === 'bad'" :size="18" aria-hidden="true" />
+              <Download v-else :size="18" aria-hidden="true" />
+              <div>
+                <strong>{{ systemUpdateStateTitle }}</strong>
+                <span>{{ systemUpdateAvailabilityText }}</span>
+              </div>
+            </div>
+
             <section class="update-info-card">
               <div class="update-info-row">
-                <span>版本号</span>
-                <strong>{{ appVersion }}</strong>
+                <span>运行版本</span>
+                <strong>v{{ appVersion }} · {{ systemRunningVersionLabel }}</strong>
+              </div>
+              <div class="update-info-row">
+                <span>源码版本</span>
+                <strong>{{ systemVersionLabel }}</strong>
+              </div>
+              <div class="update-info-row">
+                <span>跟踪分支</span>
+                <strong>{{ updateStatus?.upstream || updateStatus?.branch || "未识别" }}</strong>
               </div>
               <div class="update-info-row">
                 <span>GitHub 链接</span>
@@ -2555,6 +2574,23 @@
               </div>
             </section>
 
+            <p v-if="systemUpdateBlockingText" class="update-warning-text">
+              <TriangleAlert :size="15" aria-hidden="true" />
+              <span>{{ systemUpdateBlockingText }}</span>
+            </p>
+
+            <pre v-if="updateOutput" class="update-output">{{ updateOutput }}</pre>
+
+            <div class="update-actions">
+              <button class="button" type="button" :disabled="loadingUpdateStatus || updatingSystem || updateStatus?.updating" @click="refreshUpdateStatus(true, true)">
+                <RefreshCw :size="16" :class="{ 'update-spin': loadingUpdateStatus }" aria-hidden="true" />
+                <span>{{ loadingUpdateStatus ? "检查中" : "检查更新" }}</span>
+              </button>
+              <button class="button primary" type="button" :disabled="systemUpgradeDisabled" @click="performSystemUpdate">
+                <Download :size="16" aria-hidden="true" />
+                <span>{{ updatingSystem ? "正在升级" : systemUpgradeActionLabel }}</span>
+              </button>
+            </div>
           </div>
         </aside>
       </div>
@@ -2646,6 +2682,7 @@ import {
   getQQBotDashboardStats,
   getQQBotStatus,
   getUpdateStatus,
+  pullFromGitHub,
   installPlugin,
   listAppLogs,
   listLLMModels,
@@ -3323,6 +3360,7 @@ const webSearchConfig = reactive<WebSearchConfig>({ providers: [] });
 const webSearchSavedState = ref("");
 const webSearchTestResult = reactive({ index: -1, ok: false, durationMS: 0, text: "" });
 const loadingUpdateStatus = ref(false);
+const updatingSystem = ref(false);
 const loadingLogs = ref(false);
 const pluginBusy = ref("");
 const pluginQuery = ref("");
@@ -4382,7 +4420,7 @@ const themeStyleVars = computed<Record<string, string>>(() => {
     "--preview-accent": accent.primary
   };
 });
-const systemHasUpdate = computed(() => (updateStatus.value?.behind ?? 0) > 0);
+const systemHasUpdate = computed(() => Boolean(updateStatus.value?.update_available || (updateStatus.value?.behind ?? 0) > 0));
 const systemEntryTitle = computed(() => {
   if (!updateStatus.value) return "系统更新";
   return `${systemVersionLabel.value} · ${systemUpdateAvailabilityText.value}`;
@@ -4395,12 +4433,59 @@ const systemVersionLabel = computed(() => {
   if (branch && shortCommit) return `${branch}@${shortCommit}`;
   return branch || shortCommit || "读取中";
 });
+const systemRunningVersionLabel = computed(() => {
+  const commit = (updateStatus.value?.running_commit || "").trim();
+  return commit ? commit.slice(0, 7) : "开发构建";
+});
 const systemUpdateAvailabilityText = computed(() => {
   if (!updateStatus.value) return "读取中";
+  if (updatingSystem.value || updateStatus.value.updating) return "正在拉取、构建并替换本地程序，请保持页面开启";
+  if (updateStatus.value.restart_required) return "新版本已经安装，重启 Diana QQ Bot 后生效";
+  if (updateStatus.value.dirty) return "源码目录存在未提交改动，升级已暂停";
   const behind = updateStatus.value.behind ?? 0;
   if (!updateStatus.value.remote_url) return "未配置远端";
   if (behind > 0) return `有 ${behind} 个更新可用`;
+  if (updateStatus.value.update_available) return "源码与当前运行版本不一致，可重新构建应用";
   return "当前已是最新";
+});
+const systemUpdateStateTitle = computed(() => {
+  if (updatingSystem.value || loadingUpdateStatus.value || updateStatus.value?.updating) return "正在处理升级";
+  if (updateStatus.value?.restart_required) return "升级已就绪";
+  if (updateStatus.value?.dirty) return "升级被本地改动阻止";
+  if (systemHasUpdate.value) return "发现可用更新";
+  return updateStatus.value ? "版本状态正常" : "等待检查";
+});
+const systemUpdateTone = computed(() => {
+  if (updateStatus.value?.dirty || (!updateStatus.value?.apply_supported && Boolean(updateStatus.value))) return "bad";
+  if (updateStatus.value?.restart_required) return "success";
+  if (systemHasUpdate.value) return "warning";
+  return "neutral";
+});
+const systemUpdateBlockingText = computed(() => {
+  if (!updateStatus.value) return "";
+  if (updateStatus.value.dirty) return "请先提交或移走源码目录中的本地改动，再执行升级。";
+  if (!updateStatus.value.remote_url) return "当前源码目录没有配置 origin，无法在线升级。";
+  if (!updateStatus.value.branch) return "当前仓库处于 detached HEAD，无法确定升级分支。";
+  if (!updateStatus.value.apply_supported) return "当前部署不支持自动构建替换；Docker 部署请通过镜像更新。";
+  return "";
+});
+const systemUpgradeDisabled = computed(() => {
+  const current = updateStatus.value;
+  return Boolean(
+    updatingSystem.value ||
+      loadingUpdateStatus.value ||
+      current?.updating ||
+      !current ||
+      current.dirty ||
+      !current.remote_url ||
+      !current.branch ||
+      !current.apply_supported ||
+      current.restart_required
+  );
+});
+const systemUpgradeActionLabel = computed(() => {
+  if (updateStatus.value?.restart_required) return "等待重启";
+  return systemHasUpdate.value ? "升级并安装" : "重新构建";
 });
 const systemGitHubURL = computed(() => githubURLFromRemote(updateStatus.value?.remote_url || ""));
 const systemUpdateNote = computed(() => {
@@ -4781,7 +4866,7 @@ function syncTabFromRoute() {
 function toggleUpdateDrawer() {
   updateDrawerOpen.value = !updateDrawerOpen.value;
   if (updateDrawerOpen.value && !loadingUpdateStatus.value) {
-    void refreshUpdateStatus(false);
+    void refreshUpdateStatus(false, true);
   }
 }
 
@@ -5591,13 +5676,13 @@ async function load() {
   }
 }
 
-async function refreshUpdateStatus(showStatus = true) {
+async function refreshUpdateStatus(showStatus = true, refreshRemote = showStatus) {
   loadingUpdateStatus.value = true;
   if (showStatus) {
     setStatus("读取更新状态");
   }
   try {
-    updateStatus.value = await getUpdateStatus();
+    updateStatus.value = await getUpdateStatus(refreshRemote);
     updateOutput.value = updateStatus.value.last_update_text || "仓库状态已刷新。";
     if (showStatus) {
       updateHistory.value = [
@@ -5633,6 +5718,45 @@ async function refreshUpdateStatus(showStatus = true) {
     }
   } finally {
     loadingUpdateStatus.value = false;
+  }
+}
+
+async function performSystemUpdate() {
+  if (systemUpgradeDisabled.value) return;
+  updatingSystem.value = true;
+  setStatus("正在升级");
+  updateOutput.value = "正在拉取源码并构建应用，这可能需要几分钟。";
+  try {
+    const result = await pullFromGitHub();
+    updateStatus.value = result.status;
+    updateOutput.value = result.output || (result.updated ? "升级已完成。" : "当前已是最新版本。");
+    updateHistory.value = [
+      ...updateHistory.value.slice(-9),
+      {
+        id: `ua-${Date.now()}`,
+        title: result.applied ? "升级并安装" : "检查并更新源码",
+        output: updateOutput.value,
+        at: new Date().toLocaleTimeString(),
+        ok: true
+      }
+    ];
+    setStatus(result.restart_required ? "升级完成，请重启" : result.updated ? "源码已更新" : "已是最新", "ok");
+  } catch (error) {
+    updateOutput.value = error instanceof Error ? error.message : String(error);
+    updateHistory.value = [
+      ...updateHistory.value.slice(-9),
+      {
+        id: `uerr-${Date.now()}`,
+        title: "系统升级失败",
+        output: updateOutput.value,
+        at: new Date().toLocaleTimeString(),
+        ok: false
+      }
+    ];
+    setStatus("升级失败", "bad");
+    await refreshUpdateStatus(false, false);
+  } finally {
+    updatingSystem.value = false;
   }
 }
 

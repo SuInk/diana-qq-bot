@@ -5,6 +5,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTPUT="${1:-$ROOT/dist/diana-qq-bot-webui}"
 IDENTIFIER="${DIANA_MACOS_CODE_IDENTIFIER:-com.suink.diana-qq-bot}"
 GO_BIN="${GO:-go}"
+BUILD_SOURCE_ROOT="${DIANA_BUILD_SOURCE_ROOT:-$ROOT}"
+BUILD_COMMIT="${DIANA_UPDATE_TARGET_COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)}"
+BUILD_LDFLAGS="-X 'main.buildSourceRoot=$BUILD_SOURCE_ROOT'"
+if [[ -n "$BUILD_COMMIT" ]]; then
+	BUILD_LDFLAGS+=" -X 'main.buildCommit=$BUILD_COMMIT'"
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "build-local-mac.sh must run on macOS" >&2
@@ -24,7 +30,7 @@ if [[ "$OUTPUT" == *.app ]]; then
   trap 'rm -rf "$TEMP_APP"' EXIT
 
 	cp "$ROOT/packaging/macos/Info.plist" "$TEMP_APP/Contents/Info.plist"
-	"$GO_BIN" build -o "$APP_BINARY" ./cmd/webui
+	"$GO_BIN" build -trimpath -ldflags "$BUILD_LDFLAGS" -o "$APP_BINARY" ./cmd/webui
 	MACOS_ARCH="$(uname -m)"
 	xcrun swiftc \
 		-O \
@@ -59,7 +65,7 @@ mkdir -p "$(dirname "$OUTPUT")"
 TEMP_OUTPUT="$(dirname "$OUTPUT")/.$(basename "$OUTPUT").new.$$"
 trap 'rm -f "$TEMP_OUTPUT"' EXIT
 
-"$GO_BIN" build -o "$TEMP_OUTPUT" ./cmd/webui
+"$GO_BIN" build -trimpath -ldflags "$BUILD_LDFLAGS" -o "$TEMP_OUTPUT" ./cmd/webui
 
 # A stable designated requirement lets macOS keep Files & Folders/App Data
 # permission across local rebuilds without requiring an Apple developer cert.

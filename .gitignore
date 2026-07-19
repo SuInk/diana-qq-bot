@@ -1,4 +1,5 @@
 frontend/node_modules/
+frontend/dist.backup/
 .DS_Store
 .tmp-dev/
 .env

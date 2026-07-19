@@ -2,6 +2,9 @@
 
 [English](./README.en.md)
 
+> [!WARNING]
+> 本项目仍处于早期开发阶段，接口、配置和行为随时可能发生不兼容变更，升级前请自行备份。项目不对安全性作任何保证；请审查代码和配置，并自行承担运行、开放公网访问及接入真实账号所产生的风险。
+
 Diana QQ Bot 是一个 Go 语言 QQ 机器人服务，内置 LLM 兼容层、NapCat / OneBot v11 反向 WebSocket 接入、Gin WebUI 和插件管理。WebUI 可配置模型、机器人连接、触发词，并可启停官方内置插件。
 
 部署参数保存在 WebUI/SQLite、环境变量或本地配置文件中，仓库不包含真实 QQ 号、群号、聊天记录、Cookie 或 API Key。可从 [`.env.example`](./.env.example) 创建本地配置；`.env`、`runtime.env`、数据库、日志和媒体缓存均被 Git 忽略。贡献代码前请运行 `make audit-public`，详细规则见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
@@ -121,6 +124,19 @@ make start-napcat-mac
 如需关闭自动启动，在 `runtime.env` 中设置 `DIANA_START_NAPCAT=false`。若 QQ 不在默认的 `/Applications/QQ.app`，可通过 `DIANA_QQ_APP` 指定路径。
 
 GitHub Release 中的 `darwin-arm64` 或 `darwin-amd64` 二进制仍可用于不需要读取其他 App 数据的部署。
+
+## WebUI 升级
+
+源码部署可以点击 WebUI 左上角的版本号检查并安装更新。升级器只使用当前仓库已配置的 `origin`，并执行以下流程：
+
+1. 获取远端分支，拒绝脏工作区、detached HEAD 和非快进更新。
+2. 快进源码后，在暂存目录中安装前端依赖并构建前端、后端和 macOS App。
+3. 保留上一份程序与前端产物为 `.backup`，再替换为新构建；替换失败会恢复旧版本。
+4. 当前进程不会被强制终止。WebUI 显示“升级已就绪”后，手动重启 Diana QQ Bot 使新版本生效。
+
+源码目录由 `DIANA_UPDATE_ROOT` 指定，本机启动脚本会自动设为仓库根目录。自动构建可用 `DIANA_UPDATE_APPLY_ENABLED=false` 关闭。此功能需要 Git、Go、Node.js、npm，以及 macOS App 构建所需的 Xcode Command Line Tools。
+
+Docker 镜像不包含 Git 工作区和构建工具，因此不支持 WebUI 原地升级；请拉取或重新构建镜像后执行 `docker compose up -d`。
 
 ## Linux 部署
 
@@ -310,6 +326,8 @@ Diana 会把 NapCat 收到的 OneBot 事件转发给 NoneBot sidecar；第三方
 | `HOST` | `127.0.0.1` | HTTP 监听地址；Docker 镜像显式使用 `0.0.0.0` |
 | `PORT` | `18080` | WebUI 和 OneBot endpoint 监听端口 |
 | `FRONTEND_DIST` | `frontend/dist` | 前端构建产物目录 |
+| `DIANA_UPDATE_ROOT` | 当前目录 | WebUI 升级器使用的源码 Git 工作区；本机启动脚本自动设为仓库根目录 |
+| `DIANA_UPDATE_APPLY_ENABLED` | `true` | 是否允许升级器构建并替换本地程序；Docker 中不可用 |
 | `LOG_PATH` | 空 | 日志文件路径；设置后同时输出到 stdout 和文件 |
 | `DIANA_LOG_PATH` | 空 | `LOG_PATH` 的兼容别名 |
 | `APP_DB_PATH` | `data/diana-qq-bot.db` | 本地 SQLite 配置数据库路径 |

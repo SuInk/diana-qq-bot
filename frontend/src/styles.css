@@ -21,6 +21,8 @@
   --bad-bg: #fff1f4;
   --bad-line: #f3cad6;
   --warn: #ad7c17;
+  --warn-bg: #fff8e8;
+  --warn-line: #ead49b;
   --chip-shadow: rgba(230, 156, 183, 0.18);
   --el-color-primary: var(--primary);
   --el-bg-color: var(--panel);
@@ -284,6 +286,8 @@ html.dark {
   --bad-bg: #3b2028;
   --bad-line: #6e3948;
   --warn: #f0c96f;
+  --warn-bg: #342c1b;
+  --warn-line: #6e5c2e;
   --chip-shadow: rgba(0, 0, 0, 0.24);
 }
 
@@ -7274,6 +7278,107 @@ input {
   padding: 16px 18px 18px;
   display: grid;
   gap: 14px;
+}
+
+.update-state {
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-state > svg {
+  flex: 0 0 auto;
+}
+
+.update-state div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.update-state strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.update-state span {
+  color: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.update-state.success {
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.update-state.warning {
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.update-state.bad {
+  border-color: var(--bad-line);
+  background: var(--bad-bg);
+  color: var(--bad);
+}
+
+.update-warning-text {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  background: var(--warn-bg);
+  color: var(--warn);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.update-warning-text svg {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+.update-output {
+  max-height: 132px;
+  margin: 0;
+  padding: 11px 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--control);
+  color: var(--muted);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.update-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.update-spin {
+  animation: update-spin 900ms linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .update-info-card {

@@ -291,10 +291,15 @@ export interface UpdateStatus {
   remote_url?: string;
   head_commit?: string;
   head_subject?: string;
+  running_commit?: string;
   dirty: boolean;
   ahead?: number;
   behind?: number;
   upstream?: string;
+  updating: boolean;
+  apply_supported: boolean;
+  update_available: boolean;
+  restart_required: boolean;
   last_fetched_at?: string;
   last_update_at?: string;
   last_update_text?: string;
@@ -304,6 +309,11 @@ export interface UpdateResult {
   status: UpdateStatus;
   fetched: boolean;
   updated: boolean;
+  source_updated: boolean;
+  applied: boolean;
+  restart_required: boolean;
+  previous_commit?: string;
+  target_commit?: string;
   output?: string;
   at: string;
 }
@@ -695,8 +705,8 @@ export function saveQQBotGroupAdminConfig(token: string, config: QQBotGroupConfi
   });
 }
 
-export function getUpdateStatus(): Promise<UpdateStatus> {
-  return requestJSON<UpdateStatus>("/api/system/update");
+export function getUpdateStatus(refresh = false): Promise<UpdateStatus> {
+  return requestJSON<UpdateStatus>(refresh ? "/api/system/update?refresh=true" : "/api/system/update");
 }
 
 export function pullFromGitHub(): Promise<UpdateResult> {

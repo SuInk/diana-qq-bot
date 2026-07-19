@@ -2,6 +2,9 @@
 
 [中文](./README.md)
 
+> [!WARNING]
+> This project is in an early stage. APIs, configuration, and behavior may introduce breaking changes at any time, so create your own backups before upgrading. No security guarantee is made; review the code and configuration and accept the risks of running it, exposing it to a network, or connecting real accounts.
+
 Diana QQ Bot is a Go-based QQ bot service with an LLM compatibility layer, NapCat / OneBot v11 reverse WebSocket support, a Gin WebUI, and bot plugin management. The WebUI can configure models, bot connection settings, trigger aliases, and official built-in plugins.
 
 Deployment values live in the WebUI/SQLite, environment variables, or ignored local configuration files. The repository must not contain real QQ IDs, group IDs, conversations, cookies, or API keys. Start from [`.env.example`](./.env.example), run `make audit-public` before committing, and see [`CONTRIBUTING.md`](./CONTRIBUTING.md) for fixture rules.
@@ -121,6 +124,19 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o dist/diana-qq-bot-webui-darwi
 ```
 
 You can also download the `darwin-arm64` or `darwin-amd64` binary from GitHub Releases.
+
+## WebUI Updates
+
+Source deployments can check for and install updates by clicking the version in the top-left corner of the WebUI. The updater only uses the checkout's configured `origin` and follows this process:
+
+1. Fetch the remote branch and reject dirty work trees, detached HEADs, and non-fast-forward updates.
+2. Fast-forward the source, then build the frontend, backend, and macOS app in staging locations.
+3. Keep the previous application and frontend bundles as `.backup`, then replace them with the staged build; restore the old version if replacement fails.
+4. Do not terminate the running process. Restart Diana QQ Bot after the WebUI reports that the update is ready.
+
+`DIANA_UPDATE_ROOT` selects the source checkout; the local launcher sets it to the repository root automatically. Set `DIANA_UPDATE_APPLY_ENABLED=false` to disable automatic builds. Git, Go, Node.js, npm, and the Xcode Command Line Tools used by the macOS app build must be installed.
+
+Docker images do not contain a Git work tree or build toolchain, so in-place WebUI updates are unavailable. Pull or rebuild the image and run `docker compose up -d` instead.
 
 ## Linux Deployment
 
@@ -312,6 +328,8 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | `DIANA_NAPCAT_WEBUI_URL` | empty | Internal NapCat WebUI URL; enables login management when configured with the token |
 | `DIANA_NAPCAT_WEBUI_TOKEN` | empty | Strong NapCat WebUI token; retained only in the Diana backend environment |
 | `FRONTEND_DIST` | `frontend/dist` | Frontend build output directory |
+| `DIANA_UPDATE_ROOT` | current directory | Source Git work tree used by the WebUI updater; the local launcher sets the repository root automatically |
+| `DIANA_UPDATE_APPLY_ENABLED` | `true` | Enables building and replacing the local application; unavailable in Docker |
 | `LOG_PATH` | empty | Log file path; when set, logs are written to both stdout and the file |
 | `DIANA_LOG_PATH` | empty | Compatibility alias for `LOG_PATH` |
 | `APP_DB_PATH` | `data/diana-qq-bot.db` | Local SQLite configuration database path |
