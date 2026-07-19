@@ -44,7 +44,7 @@ echo "Installing frontend dependencies..."
 	cd "$ROOT/frontend"
 	"$NPM_BIN" ci
 	./node_modules/.bin/vue-tsc --noEmit
-	./node_modules/.bin/vite build --outDir "$STAGED_FRONTEND" --emptyOutDir
+	./node_modules/.bin/vite build --configLoader runner --outDir "$STAGED_FRONTEND" --emptyOutDir
 )
 
 echo "Building Diana QQ Bot at $TARGET_COMMIT..."
