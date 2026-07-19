@@ -64,7 +64,9 @@ export PORT="${PORT:-18080}"
 export APP_DB_PATH="${APP_DB_PATH:-$ROOT/data/diana-qq-bot.db}"
 export LOG_PATH="${LOG_PATH:-$ROOT/logs/diana-qq-bot.log}"
 export FRONTEND_DIST="${FRONTEND_DIST:-$ROOT/frontend/dist}"
-export DIANA_UPDATE_ROOT="${DIANA_UPDATE_ROOT:-$ROOT}"
+if [[ -z "${DIANA_UPDATE_ROOT:-}" && -d "$ROOT/.git" ]]; then
+  export DIANA_UPDATE_ROOT="$ROOT"
+fi
 export DIANA_UPDATE_APPLY_ENABLED="${DIANA_UPDATE_APPLY_ENABLED:-true}"
 
 export QQBOT_ENABLED="${QQBOT_ENABLED:-true}"
