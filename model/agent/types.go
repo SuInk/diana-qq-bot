@@ -51,8 +51,11 @@ type Request struct {
 }
 
 type Response struct {
-	Text  string `json:"text"`
-	Steps []Step `json:"steps,omitempty"`
+	Text     string       `json:"text"`
+	Steps    []Step       `json:"steps,omitempty"`
+	Provider llm.Provider `json:"provider,omitempty"`
+	Model    string       `json:"model,omitempty"`
+	Usage    llm.Usage    `json:"usage,omitempty"`
 }
 
 type Step struct {

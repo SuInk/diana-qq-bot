@@ -14,7 +14,7 @@ import "element-plus/es/components/tab-pane/style/css";
 import "element-plus/theme-chalk/dark/css-vars.css";
 import "./styles.css";
 
-const consolePaths = new Set(["/console", "/admin", "/webui", "/llm", "/test", "/qqbot", "/groups", "/plugins", "/web-search", "/logs", "/security", "/theme"]);
+const consolePaths = new Set(["/console", "/admin", "/webui", "/llm", "/test", "/qqbot", "/robots", "/groups", "/plugins", "/web-search", "/logs", "/security", "/theme"]);
 const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
 
 function mount(component: Component): void {

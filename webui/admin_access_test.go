@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,8 +58,8 @@ func TestAdminAccessDefaultsToRootAndPersistsRandomSuffix(t *testing.T) {
 	assertAdminAccessStatus(t, router, "/api/auth/status?path=/", false)
 	assertAdminAccessStatus(t, router, "/api/auth/status?path="+firstPath, true)
 	security := performAdminAccessRequest(router, http.MethodGet, "/security", nil, nil)
-	if security.Code != http.StatusNotFound {
-		t.Fatalf("unauthenticated security status = %d", security.Code)
+	if security.Code != http.StatusFound || security.Header().Get("Location") != firstPath {
+		t.Fatalf("unauthenticated security redirect = %d location %q", security.Code, security.Header().Get("Location"))
 	}
 	console := performAdminAccessRequest(router, http.MethodGet, "/console", nil, map[string]string{"Cookie": cookie.String()})
 	if console.Code != http.StatusOK {
@@ -122,19 +123,39 @@ func TestAdminAccessEnvironmentPathCannotBeChangedByWebUI(t *testing.T) {
 	}
 }
 
-func TestAdminAccessWithoutTokenUsesRootAndLeavesManagementOpen(t *testing.T) {
+func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
 	t.Parallel()
-	access, err := NewAdminAccess(AdminAccessConfig{SettingsPath: filepath.Join(t.TempDir(), "admin-auth.json")})
+	dir := t.TempDir()
+	credentialsPath := filepath.Join(dir, "admin-credentials.json")
+	access, err := NewAdminAccess(AdminAccessConfig{
+		SettingsPath:    filepath.Join(dir, "admin-auth.json"),
+		CredentialsPath: credentialsPath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access.Enabled() || access.LoginPath() != "/" {
+	if !access.Enabled() || access.LoginPath() != "/" || access.Username() != defaultAdminUsername {
 		t.Fatalf("enabled=%v path=%q", access.Enabled(), access.LoginPath())
 	}
 	router := newAdminAccessTestRouter(t, access)
 	response := performAdminAccessRequest(router, http.MethodGet, "/console", nil, nil)
-	if response.Code != http.StatusOK {
-		t.Fatalf("console status = %d", response.Code)
+	if response.Code != http.StatusFound || response.Header().Get("Location") != "/" {
+		t.Fatalf("console redirect = %d location %q", response.Code, response.Header().Get("Location"))
+	}
+	body, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var credential persistedAdminCredential
+	if err := json.Unmarshal(body, &credential); err != nil {
+		t.Fatal(err)
+	}
+	login := performAdminAccessRequest(router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+credential.Username+`","password":"`+credential.Password+`"}`), map[string]string{
+		"Content-Type":       "application/json",
+		"X-Diana-Login-Path": "/",
+	})
+	if login.Code != http.StatusOK || len(login.Result().Cookies()) == 0 {
+		t.Fatalf("generated credential login = %d %s", login.Code, login.Body.String())
 	}
 }
 

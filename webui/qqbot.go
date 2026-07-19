@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -82,6 +83,22 @@ type groupTestOneBotPayload struct {
 	Params map[string]any `json:"params"`
 }
 
+type qqbotAutoInfoResponse struct {
+	BotQQ         string               `json:"bot_qq,omitempty"`
+	Nickname      string               `json:"nickname,omitempty"`
+	AvatarURL     string               `json:"avatar_url,omitempty"`
+	Groups        []qqbotAutoGroupInfo `json:"groups,omitempty"`
+	RecentGroupID string               `json:"recent_group_id,omitempty"`
+	RecentUserID  string               `json:"recent_user_id,omitempty"`
+}
+
+type qqbotAutoGroupInfo struct {
+	GroupID        string `json:"group_id"`
+	GroupName      string `json:"group_name,omitempty"`
+	MemberCount    int    `json:"member_count,omitempty"`
+	MaxMemberCount int    `json:"max_member_count,omitempty"`
+}
+
 type groupAdminChallengePayload struct {
 	GroupID string `json:"group_id"`
 	UserID  string `json:"user_id"`
@@ -136,6 +153,29 @@ type groupTestFileResponse struct {
 	FileID  string `json:"file_id"`
 	Name    string `json:"name"`
 	Context string `json:"context"`
+}
+
+type qqbotTasksResponse struct {
+	Items []qqbotTaskPayload `json:"items"`
+}
+
+type qqbotTaskPayload struct {
+	ID                  string    `json:"id"`
+	Kind                string    `json:"kind"`
+	OwnerID             string    `json:"owner_id"`
+	GroupID             string    `json:"group_id,omitempty"`
+	UserID              string    `json:"user_id,omitempty"`
+	Message             string    `json:"message"`
+	Status              string    `json:"status"`
+	TriggerAt           time.Time `json:"trigger_at"`
+	IntervalSeconds     int64     `json:"interval_seconds,omitempty"`
+	LastRunAt           time.Time `json:"last_run_at,omitempty"`
+	CancelledAt         time.Time `json:"cancelled_at,omitempty"`
+	LastError           string    `json:"last_error,omitempty"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+	PendingDelivery     bool      `json:"pending_delivery,omitempty"`
+	PendingSince        time.Time `json:"pending_since,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 const minQQBotTokenChars = 16
@@ -204,6 +244,9 @@ func (h *QQBotHandler) Register(router gin.IRouter) {
 	router.POST("/api/qqbot/config/delete", h.deleteProfile)
 	router.GET("/api/qqbot/features", h.featuresStatus)
 	router.GET("/api/qqbot/status", h.status)
+	router.GET("/api/qqbot/auto-info", h.autoInfo)
+	router.GET("/api/qqbot/dashboard-stats", h.dashboardStats)
+	router.GET("/api/qqbot/tasks", h.listTasks)
 	router.POST("/api/qqbot/start", h.start)
 	router.POST("/api/qqbot/stop", h.stop)
 	if h.features.GroupTest {
@@ -224,6 +267,20 @@ func (h *QQBotHandler) Register(router gin.IRouter) {
 	router.POST("/api/qqbot/group-admin/verify", h.verifyGroupAdminChallenge)
 	router.GET("/api/qqbot/group-admin/config", h.getGroupAdminConfig)
 	router.POST("/api/qqbot/group-admin/config", h.saveGroupAdminConfig)
+}
+
+func (h *QQBotHandler) dashboardStats(c *gin.Context) {
+	if h.sqlite == nil {
+		c.JSON(http.StatusOK, storage.DashboardStats{})
+		return
+	}
+	stats, err := h.sqlite.DashboardStatsForDay(c.Request.Context(), time.Now())
+	if err != nil {
+		h.writeError(c, http.StatusInternalServerError, "qqbot.dashboard_stats", err, "dashboard", nil)
+		return
+	}
+	stats.Server = collectDashboardServerStats(time.Now())
+	c.JSON(http.StatusOK, stats)
 }
 
 // shareNapCatQRCode exposes only NapCat's current login QR through an expiring loopback URL.
@@ -298,6 +355,8 @@ func (h *QQBotHandler) uploadGroupTestFile(c *gin.Context) {
 
 var groupTestOneBotReadActions = map[string]struct{}{
 	"get_version_info":      {},
+	"get_login_info":        {},
+	"get_stranger_info":     {},
 	"get_group_list":        {},
 	"get_group_member_info": {},
 	"get_group_member_list": {},
@@ -307,6 +366,95 @@ var groupTestOneBotReadActions = map[string]struct{}{
 	"get_file":              {},
 	"get_image":             {},
 	"get_msg":               {},
+}
+
+func (h *QQBotHandler) autoInfo(c *gin.Context) {
+	status := h.runtime.Status()
+	info := qqbotAutoInfoResponse{
+		BotQQ:     strings.TrimSpace(status.Channel.SelfID),
+		AvatarURL: qqbot.QQMemberAvatarURL(status.Channel.SelfID),
+	}
+	if data, err := h.runtime.CallOneBotAPI(c.Request.Context(), "get_login_info", map[string]any{}); err == nil {
+		if userID := firstNonEmptyWebUI(stringFromAnyWebUI(data["user_id"]), stringFromAnyWebUI(data["self_id"])); userID != "" {
+			info.BotQQ = userID
+			info.AvatarURL = qqbot.QQMemberAvatarURL(userID)
+		}
+		info.Nickname = firstNonEmptyWebUI(stringFromAnyWebUI(data["nickname"]), stringFromAnyWebUI(data["user_name"]), stringFromAnyWebUI(data["name"]))
+	}
+	if info.BotQQ != "" && info.Nickname == "" {
+		if data, err := h.runtime.CallOneBotAPI(c.Request.Context(), "get_stranger_info", map[string]any{"user_id": oneBotIDParam(info.BotQQ), "no_cache": true}); err == nil {
+			info.Nickname = firstNonEmptyWebUI(stringFromAnyWebUI(data["nickname"]), stringFromAnyWebUI(data["user_name"]), stringFromAnyWebUI(data["name"]))
+		}
+	}
+	if data, err := h.runtime.CallOneBotAPI(c.Request.Context(), "get_group_list", map[string]any{"no_cache": true}); err == nil {
+		info.Groups = autoGroupsFromOneBotData(data)
+	}
+	for _, event := range status.RecentEvents {
+		if info.RecentGroupID == "" && strings.TrimSpace(event.GroupID) != "" {
+			info.RecentGroupID = strings.TrimSpace(event.GroupID)
+		}
+		if info.RecentUserID == "" && strings.TrimSpace(event.UserID) != "" && strings.TrimSpace(event.UserID) != info.BotQQ {
+			info.RecentUserID = strings.TrimSpace(event.UserID)
+		}
+		if info.RecentGroupID != "" && info.RecentUserID != "" {
+			break
+		}
+	}
+	c.JSON(http.StatusOK, info)
+}
+
+func autoGroupsFromOneBotData(data map[string]any) []qqbotAutoGroupInfo {
+	for _, key := range []string{"items", "list", "groups"} {
+		if groups := autoGroupsFromAny(data[key]); len(groups) > 0 {
+			return groups
+		}
+	}
+	if groups := autoGroupsFromAny(data["data"]); len(groups) > 0 {
+		return groups
+	}
+	return autoGroupsFromAny(data)
+}
+
+func autoGroupsFromAny(value any) []qqbotAutoGroupInfo {
+	switch typed := value.(type) {
+	case []any:
+		groups := make([]qqbotAutoGroupInfo, 0, len(typed))
+		for _, item := range typed {
+			if group := autoGroupFromAny(item); group.GroupID != "" {
+				groups = append(groups, group)
+			}
+		}
+		return groups
+	case []map[string]any:
+		groups := make([]qqbotAutoGroupInfo, 0, len(typed))
+		for _, item := range typed {
+			if group := autoGroupFromMap(item); group.GroupID != "" {
+				groups = append(groups, group)
+			}
+		}
+		return groups
+	case map[string]any:
+		if group := autoGroupFromMap(typed); group.GroupID != "" {
+			return []qqbotAutoGroupInfo{group}
+		}
+	}
+	return nil
+}
+
+func autoGroupFromAny(value any) qqbotAutoGroupInfo {
+	if item, ok := value.(map[string]any); ok {
+		return autoGroupFromMap(item)
+	}
+	return qqbotAutoGroupInfo{}
+}
+
+func autoGroupFromMap(item map[string]any) qqbotAutoGroupInfo {
+	return qqbotAutoGroupInfo{
+		GroupID:        firstNonEmptyWebUI(stringFromAnyWebUI(item["group_id"]), stringFromAnyWebUI(item["id"])),
+		GroupName:      firstNonEmptyWebUI(stringFromAnyWebUI(item["group_name"]), stringFromAnyWebUI(item["name"])),
+		MemberCount:    intFromAnyWebUI(item["member_count"]),
+		MaxMemberCount: intFromAnyWebUI(item["max_member_count"]),
+	}
 }
 
 // callGroupTestOneBot exposes a fixed read-only OneBot allowlist for local diagnostics.
@@ -330,6 +478,69 @@ func (h *QQBotHandler) callGroupTestOneBot(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"action": action, "result": result})
+}
+
+func (h *QQBotHandler) listTasks(c *gin.Context) {
+	if h.sqlite == nil {
+		h.writeError(c, http.StatusServiceUnavailable, "qqbot.tasks.list", fmt.Errorf("task store is unavailable"), "", nil)
+		return
+	}
+	items, _, err := h.sqlite.LoadReminders(c.Request.Context())
+	if err != nil {
+		h.writeError(c, http.StatusInternalServerError, "qqbot.tasks.list", err, "", nil)
+		return
+	}
+	out := make([]qqbotTaskPayload, 0, len(items))
+	for _, item := range items {
+		out = append(out, qqbotTaskPayload{
+			ID:                  item.ID,
+			Kind:                qqbotTaskKind(item),
+			OwnerID:             item.OwnerID,
+			GroupID:             item.GroupID,
+			UserID:              item.UserID,
+			Message:             item.Message,
+			Status:              qqbotTaskStatus(item),
+			TriggerAt:           item.TriggerAt,
+			IntervalSeconds:     item.IntervalSeconds,
+			LastRunAt:           item.LastRunAt,
+			CancelledAt:         item.CancelledAt,
+			LastError:           item.LastError,
+			ConsecutiveFailures: item.ConsecutiveFailures,
+			PendingDelivery:     strings.TrimSpace(item.PendingDelivery) != "",
+			PendingSince:        item.PendingSince,
+			CreatedAt:           item.CreatedAt,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.After(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	c.JSON(http.StatusOK, qqbotTasksResponse{Items: out})
+}
+
+func qqbotTaskKind(item qqbot.Reminder) string {
+	if item.Kind == qqbot.ReminderKindQuery && item.IntervalSeconds > 0 {
+		return "schedule"
+	}
+	return "reminder"
+}
+
+func qqbotTaskStatus(item qqbot.Reminder) string {
+	if !item.CancelledAt.IsZero() {
+		return "cancelled"
+	}
+	if item.Kind == qqbot.ReminderKindQuery && item.IntervalSeconds > 0 {
+		if item.ConsecutiveFailures > 0 {
+			return "retrying"
+		}
+		return "active"
+	}
+	if !item.LastRunAt.IsZero() {
+		return "used"
+	}
+	return "active"
 }
 
 // getConfig 处理 QQ 机器人配置读取请求。
@@ -824,6 +1035,60 @@ func oneBotIDParam(value string) any {
 		return parsed
 	}
 	return value
+}
+
+func firstNonEmptyWebUI(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func stringFromAnyWebUI(value any) string {
+	switch typed := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return strings.TrimSpace(typed.String())
+	case int:
+		return strconv.Itoa(typed)
+	case int32:
+		return strconv.FormatInt(int64(typed), 10)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case float64:
+		if typed == float64(int64(typed)) {
+			return strconv.FormatInt(int64(typed), 10)
+		}
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return strings.TrimSpace(fmt.Sprint(typed))
+	}
+}
+
+func intFromAnyWebUI(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
 }
 
 type runtimeAPICallChannel struct {

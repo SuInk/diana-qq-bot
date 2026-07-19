@@ -46,12 +46,22 @@ func TestAdminAuthRouteProtection(t *testing.T) {
 	auth, router := newAdminAuthTestRouter(t, time.Hour)
 
 	assertStatus(t, router, http.MethodGet, "/api/private", nil, nil, http.StatusUnauthorized)
-	assertStatus(t, router, http.MethodGet, "/console", nil, nil, http.StatusNotFound)
+	assertRedirect(t, router, "/console", auth.LoginPath())
+	assertRedirect(t, router, "/qqbot", auth.LoginPath())
+	assertRedirect(t, router, "/robots", auth.LoginPath())
 	assertStatus(t, router, http.MethodGet, auth.LoginPath(), nil, nil, http.StatusOK)
 	assertStatus(t, router, http.MethodGet, "/onebot/v11/ws", nil, nil, http.StatusOK)
 	assertStatus(t, router, http.MethodGet, "/api/qqbot/media/media-token", nil, nil, http.StatusOK)
 	assertStatus(t, router, http.MethodGet, "/api/private", nil, map[string]string{"Authorization": "Bearer " + testAdminToken}, http.StatusOK)
 	assertStatus(t, router, http.MethodGet, "/api/private", nil, map[string]string{"Authorization": "Bearer wrong-token"}, http.StatusUnauthorized)
+}
+
+func assertRedirect(t *testing.T, router http.Handler, path string, location string) {
+	t.Helper()
+	recorder := performRequest(router, http.MethodGet, path, nil, nil)
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != location {
+		t.Fatalf("%s redirect = %d location %q, want %d %q", path, recorder.Code, recorder.Header().Get("Location"), http.StatusFound, location)
+	}
 }
 
 func TestAdminAuthLoginSessionAndLogout(t *testing.T) {

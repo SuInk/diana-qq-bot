@@ -187,6 +187,7 @@ type BotConfig struct {
 	ContextSummaryThreshold      int             `json:"context_summary_threshold,omitempty"`
 	PassiveReplyChance           float64         `json:"passive_reply_chance,omitempty"`
 	PassiveReplyThreshold        float64         `json:"passive_reply_threshold,omitempty"`
+	ReplyRules                   []ReplyRule     `json:"reply_rules,omitempty"`
 	MaxBotConcurrency            int             `json:"max_bot_concurrency,omitempty"`
 	RequestTimeout               time.Duration   `json:"request_timeout,omitempty"`
 	AgentEnabled                 bool            `json:"agent_enabled,omitempty"`
@@ -198,6 +199,22 @@ type BotConfig struct {
 	AgentCommandTimeoutMS        int             `json:"agent_command_timeout_ms,omitempty"`
 	AgentBrowserCDPURL           string          `json:"agent_browser_cdp_url,omitempty"`
 	AgentBrowserTimeoutMS        int             `json:"agent_browser_timeout_ms,omitempty"`
+}
+
+type ReplyRuleAction string
+
+const (
+	ReplyRuleActionModel ReplyRuleAction = "model"
+	ReplyRuleActionVoice ReplyRuleAction = "voice"
+)
+
+type ReplyRule struct {
+	ID           string          `json:"id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Enabled      bool            `json:"enabled"`
+	Prompt       string          `json:"prompt,omitempty"`
+	Action       ReplyRuleAction `json:"action,omitempty"`
+	LLMProfileID string          `json:"llm_profile_id,omitempty"`
 }
 
 type GroupConfig struct {
@@ -256,6 +273,7 @@ type ConfigPayload struct {
 	ContextSummaryThreshold      int             `json:"context_summary_threshold,omitempty"`
 	PassiveReplyChance           float64         `json:"passive_reply_chance,omitempty"`
 	PassiveReplyThreshold        float64         `json:"passive_reply_threshold,omitempty"`
+	ReplyRules                   []ReplyRule     `json:"reply_rules,omitempty"`
 	MaxBotConcurrency            int             `json:"max_bot_concurrency,omitempty"`
 	RequestTimeoutMS             int64           `json:"request_timeout_ms,omitempty"`
 	AgentEnabled                 bool            `json:"agent_enabled,omitempty"`
@@ -515,6 +533,7 @@ func DefaultBotConfig() BotConfig {
 		ContextSummaryThreshold:      100,
 		PassiveReplyChance:           1,
 		PassiveReplyThreshold:        0.8,
+		ReplyRules:                   []ReplyRule{},
 		MaxBotConcurrency:            8,
 		RequestTimeout:               180 * time.Second,
 		AgentEnabled:                 true,
@@ -645,6 +664,7 @@ func (cfg BotConfig) WithDefaults() BotConfig {
 	cfg.GroupTriggers = cleanStrings(cfg.GroupTriggers)
 	cfg.DisabledGroups = cleanStrings(cfg.DisabledGroups)
 	cfg.DisabledUsers = cleanStrings(cfg.DisabledUsers)
+	cfg.ReplyRules = normalizeReplyRules(cfg.ReplyRules)
 	return cfg
 }
 
@@ -692,6 +712,7 @@ func PayloadFromConfig(cfg BotConfig) ConfigPayload {
 		ContextSummaryThreshold:      cfg.ContextSummaryThreshold,
 		PassiveReplyChance:           cfg.PassiveReplyChance,
 		PassiveReplyThreshold:        cfg.PassiveReplyThreshold,
+		ReplyRules:                   append([]ReplyRule(nil), cfg.ReplyRules...),
 		MaxBotConcurrency:            cfg.MaxBotConcurrency,
 		RequestTimeoutMS:             cfg.RequestTimeout.Milliseconds(),
 		AgentEnabled:                 cfg.AgentEnabled,
@@ -756,6 +777,7 @@ func ConfigFromPayload(payload ConfigPayload, existing BotConfig) BotConfig {
 		ContextSummaryThreshold:      payload.ContextSummaryThreshold,
 		PassiveReplyChance:           payload.PassiveReplyChance,
 		PassiveReplyThreshold:        payload.PassiveReplyThreshold,
+		ReplyRules:                   append([]ReplyRule(nil), payload.ReplyRules...),
 		MaxBotConcurrency:            payload.MaxBotConcurrency,
 		RequestTimeout:               time.Duration(payload.RequestTimeoutMS) * time.Millisecond,
 		AgentEnabled:                 payload.AgentEnabled,
@@ -777,6 +799,37 @@ func ConfigFromPayload(payload ConfigPayload, existing BotConfig) BotConfig {
 		cfg.NoneBotBridgeToken = existing.NoneBotBridgeToken
 	}
 	return cfg
+}
+
+func normalizeReplyRules(rules []ReplyRule) []ReplyRule {
+	out := make([]ReplyRule, 0, len(rules))
+	seen := map[string]bool{}
+	for _, rule := range rules {
+		rule.Name = strings.TrimSpace(rule.Name)
+		rule.Prompt = strings.TrimSpace(rule.Prompt)
+		rule.LLMProfileID = strings.TrimSpace(rule.LLMProfileID)
+		if rule.Prompt == "" {
+			continue
+		}
+		switch rule.Action {
+		case ReplyRuleActionVoice, ReplyRuleActionModel:
+		default:
+			rule.Action = ReplyRuleActionModel
+		}
+		rule.ID = strings.TrimSpace(rule.ID)
+		if rule.ID == "" {
+			rule.ID = uuid.NewString()[:8]
+		}
+		for seen[rule.ID] {
+			rule.ID = uuid.NewString()[:8]
+		}
+		seen[rule.ID] = true
+		if rule.Name == "" {
+			rule.Name = "回复规则"
+		}
+		out = append(out, rule)
+	}
+	return out
 }
 
 // cleanStrings 清理字符串列表中的空值和重复项。

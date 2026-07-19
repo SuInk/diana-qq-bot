@@ -117,6 +117,7 @@ export interface QQBotConfig {
   context_summary_threshold?: number;
   passive_reply_chance?: number;
   passive_reply_threshold?: number;
+  reply_rules?: ReplyRule[];
   max_bot_concurrency?: number;
   request_timeout_ms?: number;
   agent_enabled?: boolean;
@@ -128,6 +129,111 @@ export interface QQBotConfig {
   agent_command_timeout_ms?: number;
   agent_browser_cdp_url?: string;
   agent_browser_timeout_ms?: number;
+}
+
+export type ReplyRuleAction = "model" | "voice";
+
+export interface ReplyRule {
+  id?: string;
+  name?: string;
+  enabled: boolean;
+  prompt?: string;
+  action?: ReplyRuleAction;
+  llm_profile_id?: string;
+}
+
+export interface QQBotTask {
+  id: string;
+  kind: string;
+  owner_id?: string;
+  group_id?: string;
+  user_id?: string;
+  message?: string;
+  status?: string;
+  trigger_at?: string;
+  interval_seconds?: number;
+  last_run_at?: string;
+  cancelled_at?: string;
+  last_error?: string;
+  consecutive_failures?: number;
+  pending_delivery?: boolean;
+  pending_since?: string;
+  created_at?: string;
+}
+
+export interface QQBotTasksResponse {
+  items: QQBotTask[];
+}
+
+export interface QQBotAutoGroupInfo {
+  group_id: string;
+  group_name?: string;
+  member_count?: number;
+  max_member_count?: number;
+}
+
+export interface QQBotAutoInfo {
+  bot_qq?: string;
+  nickname?: string;
+  avatar_url?: string;
+  groups?: QQBotAutoGroupInfo[];
+  recent_group_id?: string;
+  recent_user_id?: string;
+}
+
+export interface QQBotDashboardBucket {
+  hour: string;
+  messages: number;
+  replies: number;
+  searches: number;
+  images: number;
+}
+
+export interface QQBotDashboardMeasure {
+  label: string;
+  value: number;
+}
+
+export interface QQBotDashboardStats {
+  since?: string;
+  until?: string;
+  received_messages: number;
+  replied_messages: number;
+  text_replies: number;
+  image_generations: number;
+  image_edits: number;
+  search_calls: number;
+  api_calls: number;
+  llm_calls: number;
+  llm_input_tokens: number;
+  llm_output_tokens: number;
+  llm_total_tokens: number;
+  server?: QQBotDashboardServerStats;
+  hourly: QQBotDashboardBucket[];
+  operation_breakdown: QQBotDashboardMeasure[];
+}
+
+export interface QQBotDashboardServerStats {
+  collected_at?: string;
+  hostname?: string;
+  os: string;
+  arch: string;
+  process_id: number;
+  process_uptime_seconds?: number;
+  cpu_model?: string;
+  cpu_cores: number;
+  cpu_usage_percent?: number;
+  process_cpu_percent?: number;
+  memory_total_bytes?: number;
+  memory_used_bytes?: number;
+  memory_usage_percent?: number;
+  process_memory_bytes?: number;
+  go_heap_alloc_bytes?: number;
+  go_heap_system_bytes?: number;
+  go_routines: number;
+  runtime_version?: string;
+  metrics_unavailable_reason?: string;
+  process_metrics_unavailable?: string;
 }
 
 export interface PluginManifest {
@@ -304,10 +410,12 @@ export interface AdminAuthStatus {
   configured: boolean;
   authenticated: boolean;
   login_page: boolean;
+  username?: string;
 }
 
 export interface AdminAccessSettings {
   configured: boolean;
+  username?: string;
   random_suffix_enabled: boolean;
   login_path: string;
   managed_by_environment: boolean;
@@ -338,11 +446,11 @@ export function getAdminAuthStatus(path = window.location.pathname): Promise<Adm
   return requestJSON<AdminAuthStatus>(`/api/auth/status?path=${encodeURIComponent(path)}`);
 }
 
-export function loginAdmin(token: string, loginPath: string): Promise<{ authenticated: boolean; expires_at?: string }> {
+export function loginAdmin(username: string, password: string, loginPath: string): Promise<{ authenticated: boolean; expires_at?: string }> {
   return requestJSON("/api/auth/login", {
     method: "POST",
     headers: { "X-Diana-Login-Path": loginPath },
-    body: JSON.stringify({ token })
+    body: JSON.stringify({ username, password })
   });
 }
 
@@ -482,6 +590,18 @@ export function deleteQQBotProfile(id: string): Promise<QQBotConfig> {
 
 export function getQQBotStatus(): Promise<QQBotStatus> {
   return requestJSON<QQBotStatus>("/api/qqbot/status");
+}
+
+export function getQQBotAutoInfo(): Promise<QQBotAutoInfo> {
+  return requestJSON<QQBotAutoInfo>("/api/qqbot/auto-info");
+}
+
+export function listQQBotTasks(): Promise<QQBotTasksResponse> {
+  return requestJSON<QQBotTasksResponse>("/api/qqbot/tasks");
+}
+
+export function getQQBotDashboardStats(): Promise<QQBotDashboardStats> {
+  return requestJSON<QQBotDashboardStats>("/api/qqbot/dashboard-stats");
 }
 
 export function startQQBot(): Promise<QQBotStatus> {

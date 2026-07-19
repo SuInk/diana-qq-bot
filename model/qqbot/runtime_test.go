@@ -3687,6 +3687,120 @@ func TestRuntimeFailsOverLLMProfilesWithinGroup(t *testing.T) {
 	}
 }
 
+func TestRuntimeReplyRuleUsesSpecificLLMProfile(t *testing.T) {
+	channel := &recordingChannel{}
+	store := &stubLLMProfileStore{
+		set: llm.ProfileSet{
+			ActiveID: "main",
+			Profiles: []llm.Profile{
+				{ID: "main", Name: "主模型", Group: "chat", Config: llm.ProviderConfig{Provider: llm.ProviderOpenAICompatible, APIKey: "key-main", Model: "main-model"}},
+				{ID: "special", Name: "规则模型", Group: "chat", Config: llm.ProviderConfig{Provider: llm.ProviderOpenAICompatible, APIKey: "key-special", Model: "special-model"}},
+			},
+		},
+	}
+	runtime := NewRuntime(BotConfig{
+		AgentEnabled: false,
+		ReplyRules: []ReplyRule{{
+			ID:           "rule-special",
+			Name:         "严肃问题走强模型",
+			Enabled:      true,
+			Prompt:       "当用户在问需要严肃分析的问题时命中",
+			Action:       ReplyRuleActionModel,
+			LLMProfileID: "special",
+		}},
+	}, channel, NewPluginManager(), store, nil, nil, nil)
+	var attempts []string
+	main := &sequenceLLMProvider{replies: []string{
+		`{"action":"none","prompt":""}`,
+		`{"matched":true,"rule_id":"rule-special","confidence":0.96,"reason":"需要严肃分析"}`,
+	}}
+	runtime.SetLLMProviderConfigFactory(func(cfg llm.ProviderConfig) (LLMProvider, error) {
+		attempts = append(attempts, cfg.Model)
+		if cfg.Model == "special-model" {
+			return &capturingLLMProvider{reply: "special reply"}, nil
+		}
+		return main, nil
+	})
+
+	reply, err := runtime.replyTo(context.Background(), MessageEvent{
+		Kind:      EventKindPrivate,
+		UserID:    "10001",
+		MessageID: "rule-model",
+		Segments:  []MessageSegment{{Type: "text", Data: map[string]string{"text": "帮我严肃分析一下"}}},
+	}, "帮我严肃分析一下")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply != "special reply" || len(channel.sent) != 1 || channel.sent[0].Text != "special reply" {
+		t.Fatalf("reply=%q sent=%#v", reply, channel.sent)
+	}
+	want := []string{"main-model", "main-model", "special-model"}
+	if len(attempts) != len(want) {
+		t.Fatalf("attempts=%#v want %#v", attempts, want)
+	}
+	for i := range want {
+		if attempts[i] != want[i] {
+			t.Fatalf("attempts=%#v want %#v", attempts, want)
+		}
+	}
+	if store.set.ActiveID != "main" {
+		t.Fatalf("reply rule should not activate profile globally, ActiveID=%q", store.set.ActiveID)
+	}
+}
+
+func TestRuntimeReplyRuleConvertsReplyToVoice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/wav")
+		_, _ = w.Write(testWAVBytes())
+	}))
+	defer server.Close()
+	t.Setenv("DIANA_TTS_ENDPOINT", server.URL)
+	t.Setenv("DIANA_TTS_OUTPUT_DIR", t.TempDir())
+	t.Setenv("DIANA_TTS_SILK_ENCODER_PATH", "")
+
+	channel := &recordingChannel{}
+	provider := &sequenceLLMProvider{replies: []string{
+		`{"action":"none","prompt":""}`,
+		`{"matched":true,"rule_id":"voice-rule","confidence":0.99,"reason":"用户要求语音风格回复"}`,
+		"晚安，做个好梦。",
+	}}
+	runtime := NewRuntime(BotConfig{
+		AgentEnabled: false,
+		ReplyRules: []ReplyRule{{
+			ID:      "voice-rule",
+			Name:    "语音回复",
+			Enabled: true,
+			Prompt:  "当用户希望机器人用语音回复时命中",
+			Action:  ReplyRuleActionVoice,
+		}},
+	}, channel, NewDefaultPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
+		return provider, nil
+	})
+	runtime.SetLocalMediaSharer(&recordingLocalMediaSharer{url: "http://127.0.0.1:18080/api/qqbot/media/rule-voice"})
+
+	reply, err := runtime.replyTo(context.Background(), MessageEvent{
+		Kind:      EventKindGroup,
+		GroupID:   "123456",
+		UserID:    "10001",
+		MessageID: "rule-voice",
+		Segments:  []MessageSegment{{Type: "text", Data: map[string]string{"text": "嘉然用语音说晚安"}}},
+	}, "嘉然用语音说晚安")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reply, "[CQ:record,file=") || len(channel.sent) != 1 {
+		t.Fatalf("reply=%q sent=%#v", reply, channel.sent)
+	}
+	message := channel.sent[0]
+	if message.GroupID != "123456" || message.ReplyMessageID != "" || message.MentionUserID != "" {
+		t.Fatalf("voice message must be standalone record: %#v", message)
+	}
+	segments := buildOutgoingSegments(message)
+	if len(segments) != 1 || segments[0]["type"] != "record" {
+		t.Fatalf("segments=%#v", segments)
+	}
+}
+
 // TestRuntimeSendsWelcomeOnGroupIncrease 验证对应功能场景。
 func TestRuntimeSendsWelcomeOnGroupIncrease(t *testing.T) {
 	channel := &recordingChannel{}

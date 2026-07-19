@@ -13,13 +13,13 @@ const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 try {
   await page.goto(new URL("/qqbot", baseURL).toString(), { waitUntil: "networkidle" });
 
-  const versionVisible = await page.getByText("v0.0.1").first().isVisible().catch(() => false);
+  const versionVisible = await page.getByText("v0.1.0").first().isVisible().catch(() => false);
   const groupTestVisible = await page.getByText("QQ群收发测试").isVisible().catch(() => false);
   const sendButtonVisible = await page.getByRole("button", { name: /发送到 QQ 群/ }).isVisible().catch(() => false);
   const restfulAPIVisible = await page.getByText("RESTful API").isVisible().catch(() => false);
 
   if (!versionVisible) {
-    fail("expected sidebar version v0.0.1 to be visible");
+    fail("expected sidebar version v0.1.0 to be visible");
   }
   if (!groupTestVisible) {
     fail("expected dev-only QQ group test panel to be visible");

@@ -20,23 +20,36 @@
           <div class="admin-login-key"><KeyRound :size="19" aria-hidden="true" /></div>
           <div>
             <h2 id="admin-login-title">管理员登录</h2>
-            <p>输入管理 Token</p>
+            <p>输入账号和密码</p>
           </div>
         </div>
 
         <label class="admin-token-field">
-          <span>Token</span>
+          <span>账号</span>
           <div class="admin-token-input">
             <input
-              v-model="token"
-              :type="showToken ? 'text' : 'password'"
-              autocomplete="current-password"
+              v-model.trim="username"
+              type="email"
+              autocomplete="username"
               autofocus
               required
               aria-describedby="admin-login-error"
             />
-            <button type="button" :aria-label="showToken ? '隐藏 Token' : '显示 Token'" :title="showToken ? '隐藏 Token' : '显示 Token'" @click="showToken = !showToken">
-              <EyeOff v-if="showToken" :size="17" aria-hidden="true" />
+          </div>
+        </label>
+
+        <label class="admin-token-field">
+          <span>密码</span>
+          <div class="admin-token-input">
+            <input
+              v-model="password"
+              :type="showPassword ? 'text' : 'password'"
+              autocomplete="current-password"
+              required
+              aria-describedby="admin-login-error"
+            />
+            <button type="button" :aria-label="showPassword ? '隐藏密码' : '显示密码'" :title="showPassword ? '隐藏密码' : '显示密码'" @click="showPassword = !showPassword">
+              <EyeOff v-if="showPassword" :size="17" aria-hidden="true" />
               <Eye v-else :size="17" aria-hidden="true" />
             </button>
           </div>
@@ -44,7 +57,7 @@
 
         <p v-if="error" id="admin-login-error" class="admin-login-error" role="alert">{{ error }}</p>
 
-        <button class="admin-login-submit" type="submit" :disabled="submitting || !token.trim()">
+        <button class="admin-login-submit" type="submit" :disabled="submitting || !username.trim() || !password.trim()">
           <LoaderCircle v-if="submitting" class="spin" :size="18" aria-hidden="true" />
           <LogIn v-else :size="18" aria-hidden="true" />
           <span>{{ submitting ? "验证中" : "进入后台" }}</span>
@@ -59,8 +72,9 @@ import { onMounted, ref } from "vue";
 import { BotMessageSquare, Eye, EyeOff, KeyRound, LoaderCircle, LogIn, ShieldCheck } from "@lucide/vue";
 import { getAdminAuthStatus, loginAdmin, rememberAdminLoginPath } from "./api";
 
-const token = ref("");
-const showToken = ref(false);
+const username = ref("admin@diana.local");
+const password = ref("");
+const showPassword = ref(false);
 const submitting = ref(false);
 const error = ref("");
 const loginPath = window.location.pathname.replace(/\/+$/, "") || "/";
@@ -72,6 +86,9 @@ onMounted(async () => {
       window.location.replace("/");
       return;
     }
+    if (status.username) {
+      username.value = status.username;
+    }
     if (!status.configured || status.authenticated) {
       window.location.replace("/console");
     }
@@ -81,11 +98,11 @@ onMounted(async () => {
 });
 
 async function submit(): Promise<void> {
-  if (submitting.value || !token.value.trim()) return;
+  if (submitting.value || !username.value.trim() || !password.value.trim()) return;
   submitting.value = true;
   error.value = "";
   try {
-    await loginAdmin(token.value.trim(), loginPath);
+    await loginAdmin(username.value.trim(), password.value.trim(), loginPath);
     rememberAdminLoginPath(loginPath);
     window.location.replace("/console");
   } catch (err) {

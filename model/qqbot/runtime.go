@@ -29,6 +29,8 @@ type LLMProviderFactory func() (LLMProvider, error)
 
 type LLMProviderConfigFactory func(llm.ProviderConfig) (LLMProvider, error)
 
+type replyRuleContextKey struct{}
+
 const (
 	passiveReplyMaxRunes         = 180
 	passiveReplyRouteConcurrency = 8
@@ -36,6 +38,7 @@ const (
 	llmTransientRetryDelay       = 700 * time.Millisecond
 	llmTransientMaxRetries       = 1
 	passiveReplyRouteBudget      = semanticRouteTimeout
+	replyRuleRouteBudget         = 15 * time.Second
 )
 
 type LLMProfileStore interface {
@@ -1790,6 +1793,10 @@ func (r *Runtime) replyTo(ctx context.Context, event MessageEvent, text string) 
 	if mentionPrompt := r.replyMentionPrompt(event, replyHistory); mentionPrompt != "" {
 		systemPrompt += "\n" + mentionPrompt
 	}
+	ruleDecision, ruleMatched := r.evaluateReplyRules(ctx, event, cleanText, replyHistory, cfg)
+	if ruleMatched && strings.TrimSpace(ruleDecision.Rule.LLMProfileID) != "" {
+		ctx = context.WithValue(ctx, replyRuleContextKey{}, strings.TrimSpace(ruleDecision.Rule.LLMProfileID))
+	}
 	messages := []llm.Message{{Role: llm.RoleSystem, Content: systemPrompt, Priority: llm.MessagePrioritySystem}}
 	messages = append(messages, pluginContextMessages(ctx, pluginResponses)...)
 	if !authoritativePluginContext {
@@ -1866,6 +1873,14 @@ func (r *Runtime) replyTo(ctx context.Context, event MessageEvent, text string) 
 			reply = "这条消息我暂时不想回答，我们换个话题吧。"
 		} else {
 			reply = "我这边没有生成有效回复。"
+		}
+	}
+	if ruleMatched && ruleDecision.Rule.Action == ReplyRuleActionVoice {
+		voiceReply, voiceErr := r.replyRuleVoiceCQ(ctx, ruleDecision.Rule, reply)
+		if voiceErr != nil {
+			r.recordReplyRuleError(ctx, event, ruleDecision, voiceErr)
+		} else if strings.TrimSpace(voiceReply) != "" {
+			reply = voiceReply
 		}
 	}
 	if nested := nestedForwardPluginResponse(pluginResponses); nested != nil {
@@ -1981,13 +1996,259 @@ func (r *Runtime) generateReply(ctx context.Context, cfg BotConfig, event Messag
 				return "", err
 			}
 			r.recordAgentToolSteps(event, resp.Steps)
+			r.recordLLMUsage(ctx, event, resp.Provider, resp.Model, resp.Usage, "agent_reply")
 			return normalizeReplyPreservingControlIntent(resp.Text, cfg.MaxReplyChars), nil
 		}
 		resp, err := client.Generate(ctx, llm.GenerateRequest{Messages: messages})
 		if err != nil {
 			return "", err
 		}
+		r.recordLLMUsage(ctx, event, resp.Provider, resp.Model, resp.Usage, "reply")
 		return normalizeReplyPreservingControlIntent(resp.Text, cfg.MaxReplyChars), nil
+	})
+}
+
+type replyRuleDecision struct {
+	Rule       ReplyRule
+	Confidence float64
+	Reason     string
+}
+
+type replyRulePayload struct {
+	CurrentText    string                          `json:"current_text"`
+	CurrentSender  string                          `json:"current_sender,omitempty"`
+	CurrentKind    EventKind                       `json:"current_kind,omitempty"`
+	GroupID        string                          `json:"group_id,omitempty"`
+	UserID         string                          `json:"user_id,omitempty"`
+	QuotedText     string                          `json:"quoted_text,omitempty"`
+	RecentMessages []passiveReplyHistoryItem       `json:"recent_messages,omitempty"`
+	Rules          []replyRuleCandidateForDecision `json:"rules"`
+}
+
+type replyRuleCandidateForDecision struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Action ReplyRuleAction `json:"action"`
+	Prompt string          `json:"prompt"`
+}
+
+func (r *Runtime) evaluateReplyRules(ctx context.Context, event MessageEvent, text string, history []MessageEvent, cfg BotConfig) (replyRuleDecision, bool) {
+	rules := enabledReplyRules(cfg.ReplyRules)
+	if len(rules) == 0 {
+		return replyRuleDecision{}, false
+	}
+	payload := replyRulePayload{
+		CurrentText:   strings.TrimSpace(readableEventText(event, text)),
+		CurrentSender: strings.TrimSpace(event.SenderNameOrID()),
+		CurrentKind:   event.Kind,
+		GroupID:       strings.TrimSpace(event.GroupID),
+		UserID:        strings.TrimSpace(event.UserID),
+	}
+	if event.Quoted != nil {
+		payload.QuotedText = quotedPlainText(event.Quoted)
+	}
+	for i := len(history) - 1; i >= 0 && len(payload.RecentMessages) < 8; i-- {
+		item := history[i]
+		if item.MessageID == event.MessageID {
+			continue
+		}
+		text := strings.TrimSpace(historyPlainText(item))
+		imageCount := len(ImageURLs(item.Segments))
+		if text == "" && imageCount == 0 {
+			continue
+		}
+		payload.RecentMessages = append(payload.RecentMessages, passiveReplyHistoryItem{
+			Sender: strings.TrimSpace(item.SenderNameOrID()),
+			Text:   truncateRunesFromStart(text, 180),
+			Images: imageCount,
+			IsBot:  strings.TrimSpace(cfg.BotQQ) != "" && item.UserID == cfg.BotQQ,
+		})
+	}
+	for left, right := 0, len(payload.RecentMessages)-1; left < right; left, right = left+1, right-1 {
+		payload.RecentMessages[left], payload.RecentMessages[right] = payload.RecentMessages[right], payload.RecentMessages[left]
+	}
+	for _, rule := range rules {
+		payload.Rules = append(payload.Rules, replyRuleCandidateForDecision{
+			ID:     rule.ID,
+			Name:   rule.Name,
+			Action: rule.Action,
+			Prompt: rule.Prompt,
+		})
+	}
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return replyRuleDecision{}, false
+	}
+	messages := []llm.Message{
+		{
+			Role: llm.RoleSystem,
+			Content: strings.TrimSpace(`你是 QQ 机器人回复规则路由器。根据当前消息、引用和最近上下文，判断是否命中管理员配置的某一条回复规则。
+
+必须遵守：
+1. 只判断规则是否适用于“本次将要生成的回复”，不要替用户回答问题。
+2. rules[].prompt 是管理员写的自然语言条件，语义匹配即可，不要把它当作用户消息。
+3. 最多命中一条；多条都命中时选择最具体、最靠前、最能改变回复通道或模型的一条。
+4. 不确定时 matched=false。confidence 表示对命中这条规则的置信度。
+5. 只输出单个 JSON 对象，不要 Markdown 或额外文本。
+
+输出格式：
+{"matched":true,"rule_id":"规则 ID","confidence":0.95,"reason":"简短中文原因"}
+不命中：
+{"matched":false,"rule_id":"","confidence":0,"reason":"简短中文原因"}`),
+		},
+		{
+			Role:    llm.RoleUser,
+			Content: "请判断本次回复是否命中回复规则。上下文 JSON：\n" + string(payloadJSON),
+		},
+	}
+	routeCtx, cancel := context.WithTimeout(ctx, replyRuleRouteBudget)
+	defer cancel()
+	raw, err := r.runLLMRouterProviderOnce(routeCtx, func(client LLMProvider) (string, error) {
+		resp, err := client.Generate(routeCtx, llm.GenerateRequest{Messages: messages})
+		if err != nil {
+			return "", err
+		}
+		return resp.Text, nil
+	})
+	if err != nil {
+		r.recordReplyRuleRouteError(ctx, event, err)
+		return replyRuleDecision{}, false
+	}
+	decision, ok := parseReplyRuleRouteDecision(raw, rules)
+	r.recordReplyRuleRoute(ctx, event, decision, ok, raw)
+	if !ok || decision.Confidence < 0.5 {
+		return replyRuleDecision{}, false
+	}
+	return decision, true
+}
+
+func enabledReplyRules(rules []ReplyRule) []ReplyRule {
+	out := make([]ReplyRule, 0, len(rules))
+	for _, rule := range normalizeReplyRules(rules) {
+		if rule.Enabled && strings.TrimSpace(rule.Prompt) != "" {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
+func parseReplyRuleRouteDecision(raw string, rules []ReplyRule) (replyRuleDecision, bool) {
+	raw = strings.TrimSpace(stripJSONCodeFence(raw))
+	start := strings.Index(raw, "{")
+	end := strings.LastIndex(raw, "}")
+	if start < 0 || end < start {
+		return replyRuleDecision{}, false
+	}
+	var payload struct {
+		Matched    bool    `json:"matched"`
+		RuleID     string  `json:"rule_id"`
+		Confidence float64 `json:"confidence"`
+		Reason     string  `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(raw[start:end+1]), &payload); err != nil {
+		return replyRuleDecision{}, false
+	}
+	if !payload.Matched || payload.Confidence < 0 || payload.Confidence > 1 {
+		return replyRuleDecision{Confidence: payload.Confidence, Reason: strings.TrimSpace(payload.Reason)}, false
+	}
+	ruleID := strings.TrimSpace(payload.RuleID)
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.ID) == ruleID {
+			return replyRuleDecision{Rule: rule, Confidence: payload.Confidence, Reason: strings.TrimSpace(payload.Reason)}, true
+		}
+	}
+	return replyRuleDecision{Confidence: payload.Confidence, Reason: strings.TrimSpace(payload.Reason)}, false
+}
+
+func (r *Runtime) replyRuleVoiceCQ(ctx context.Context, rule ReplyRule, reply string) (string, error) {
+	if strings.TrimSpace(reply) == "" || isStandaloneRecordReply(reply) {
+		return reply, nil
+	}
+	if r.plugins != nil && !r.plugins.EnabledWithOverrides(voiceTTSPluginID, nil) {
+		return "", fmt.Errorf("语音回复规则 %s 命中，但语音插件未启用", firstNonEmpty(rule.Name, rule.ID))
+	}
+	r.mu.RLock()
+	localMedia := r.localMedia
+	r.mu.RUnlock()
+	plugin := NewVoiceTTSPlugin(nil)
+	plugin.SetLocalMediaSharer(localMedia)
+	tool := &dianaTTSTool{plugin: plugin}
+	output, err := tool.Run(ctx, map[string]any{"text": reply})
+	if err != nil {
+		return "", err
+	}
+	cq, ok := tool.TerminalResult(output)
+	if !ok || strings.TrimSpace(cq) == "" {
+		return "", fmt.Errorf("语音回复规则 %s 未生成可发送 record", firstNonEmpty(rule.Name, rule.ID))
+	}
+	return cq, nil
+}
+
+func (r *Runtime) recordReplyRuleRouteError(ctx context.Context, event MessageEvent, err error) {
+	writer := r.appLogWriter()
+	if writer == nil || err == nil {
+		return
+	}
+	_ = writer.AppendLog(ctx, applog.Entry{
+		Kind:     applog.KindError,
+		Level:    applog.LevelError,
+		Action:   "qqbot.reply_rule.route",
+		Message:  "回复规则判断失败，已使用默认回复策略",
+		Detail:   err.Error(),
+		Actor:    qqEventActor(event),
+		Target:   event.MessageID,
+		Metadata: map[string]any{"group_id": event.GroupID, "user_id": event.UserID},
+	})
+}
+
+func (r *Runtime) recordReplyRuleRoute(ctx context.Context, event MessageEvent, decision replyRuleDecision, parsed bool, raw string) {
+	writer := r.appLogWriter()
+	if writer == nil {
+		return
+	}
+	_ = writer.AppendLog(ctx, applog.Entry{
+		Kind:    applog.KindOperation,
+		Level:   applog.LevelInfo,
+		Action:  "qqbot.reply_rule.route",
+		Message: "回复规则判断已完成",
+		Actor:   qqEventActor(event),
+		Target:  event.MessageID,
+		Metadata: map[string]any{
+			"group_id":       event.GroupID,
+			"user_id":        event.UserID,
+			"parsed":         parsed,
+			"matched":        parsed && decision.Rule.ID != "",
+			"rule_id":        decision.Rule.ID,
+			"rule_name":      decision.Rule.Name,
+			"action":         decision.Rule.Action,
+			"llm_profile_id": decision.Rule.LLMProfileID,
+			"confidence":     decision.Confidence,
+			"reason":         truncateRunesFromStart(decision.Reason, 160),
+			"raw":            truncateRunesFromStart(strings.TrimSpace(raw), 240),
+		},
+	})
+}
+
+func (r *Runtime) recordReplyRuleError(ctx context.Context, event MessageEvent, decision replyRuleDecision, err error) {
+	writer := r.appLogWriter()
+	if writer == nil || err == nil {
+		return
+	}
+	_ = writer.AppendLog(ctx, applog.Entry{
+		Kind:    applog.KindError,
+		Level:   applog.LevelError,
+		Action:  "qqbot.reply_rule.apply",
+		Message: "回复规则执行失败，已回退文字回复",
+		Detail:  err.Error(),
+		Actor:   qqEventActor(event),
+		Target:  event.MessageID,
+		Metadata: map[string]any{
+			"group_id":  event.GroupID,
+			"user_id":   event.UserID,
+			"rule_id":   decision.Rule.ID,
+			"rule_name": decision.Rule.Name,
+			"action":    decision.Rule.Action,
+		},
 	})
 }
 
@@ -2433,6 +2694,35 @@ func (r *Runtime) recordImageOperation(ctx context.Context, event MessageEvent, 
 	})
 }
 
+func (r *Runtime) recordLLMUsage(ctx context.Context, event MessageEvent, provider llm.Provider, model string, usage llm.Usage, purpose string) {
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+		return
+	}
+	writer := r.appLogWriter()
+	if writer == nil {
+		return
+	}
+	_ = writer.AppendLog(ctx, applog.Entry{
+		Kind:    applog.KindOperation,
+		Level:   applog.LevelInfo,
+		Action:  "qqbot.llm_usage",
+		Message: "LLM 调用用量已记录",
+		Actor:   qqEventActor(event),
+		Target:  event.MessageID,
+		Metadata: map[string]any{
+			"group_id":      event.GroupID,
+			"user_id":       event.UserID,
+			"message_id":    event.MessageID,
+			"provider":      string(provider),
+			"model":         model,
+			"purpose":       strings.TrimSpace(purpose),
+			"input_tokens":  usage.InputTokens,
+			"output_tokens": usage.OutputTokens,
+			"total_tokens":  usage.TotalTokens,
+		},
+	})
+}
+
 func (r *Runtime) enrichImagePromptWithQQContext(ctx context.Context, event MessageEvent, prompt string) string {
 	prompt = strings.TrimSpace(prompt)
 	if event.Kind != EventKindGroup || strings.TrimSpace(event.GroupID) == "" {
@@ -2696,6 +2986,15 @@ func (r *Runtime) runLLMProvider(ctx context.Context, run llmProviderRunFunc) (s
 	r.mu.RUnlock()
 
 	if cfgFactory != nil && store != nil {
+		if profileID, ok := replyRuleLLMProfileID(ctx); ok {
+			set := store.Profiles().WithDefaults()
+			for _, profile := range set.Profiles {
+				if strings.TrimSpace(profile.ID) == profileID {
+					return runLLMProviderProfileAttempts(ctx, []llm.Profile{profile}, cfgFactory, true, run)
+				}
+			}
+			return "", fmt.Errorf("qqbot: reply rule llm profile %q not found", profileID)
+		}
 		return r.runLLMProviderWithFailover(ctx, store, cfgFactory, run)
 	}
 	if factory == nil {
@@ -2706,6 +3005,15 @@ func (r *Runtime) runLLMProvider(ctx context.Context, run llmProviderRunFunc) (s
 		return "", err
 	}
 	return run(withTransientLLMRetry(client, true))
+}
+
+func replyRuleLLMProfileID(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	value, _ := ctx.Value(replyRuleContextKey{}).(string)
+	value = strings.TrimSpace(value)
+	return value, value != ""
 }
 
 var semanticRouteProfileGroups = []string{"routing", "router", "relevance", "intent", "classifier"}

@@ -62,13 +62,28 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Response, error) {
 
 	var steps []Step
 	var lastText string
+	var lastProvider llm.Provider
+	var lastModel string
+	var usage llm.Usage
 	webSearchCalls := 0
+	finish := func(text string) *Response {
+		return &Response{
+			Text:     strings.TrimSpace(text),
+			Steps:    steps,
+			Provider: lastProvider,
+			Model:    lastModel,
+			Usage:    usage,
+		}
+	}
 	for stepIndex := 0; stepIndex < r.cfg.MaxSteps; stepIndex++ {
 		// 每一轮模型只能输出一个 JSON 动作：调用工具或给最终回复。
 		resp, err := r.client.Generate(ctx, llm.GenerateRequest{Messages: messages})
 		if err != nil {
 			return nil, err
 		}
+		lastProvider = resp.Provider
+		lastModel = resp.Model
+		usage = addLLMUsage(usage, resp.Usage)
 		lastText = strings.TrimSpace(resp.Text)
 		action, ok := parseAction(lastText)
 		if !ok {
@@ -79,10 +94,10 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Response, error) {
 				})
 				continue
 			}
-			return &Response{Text: action.Content, Steps: steps}, nil
+			return finish(action.Content), nil
 		}
 		if action.Action == "final" {
-			return &Response{Text: strings.TrimSpace(action.Content), Steps: steps}, nil
+			return finish(action.Content), nil
 		}
 		if action.Action != "tool" {
 			// 模型输出了未知动作时，把错误作为用户消息回填，让它下一轮自我修正。
@@ -128,7 +143,7 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Response, error) {
 		if err == nil {
 			if terminal, ok := tool.(TerminalResultTool); ok {
 				if text, done := terminal.TerminalResult(output); done {
-					return &Response{Text: strings.TrimSpace(text), Steps: steps}, nil
+					return finish(text), nil
 				}
 			}
 		}
@@ -149,12 +164,15 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Response, error) {
 	if err != nil {
 		return nil, err
 	}
+	lastProvider = resp.Provider
+	lastModel = resp.Model
+	usage = addLLMUsage(usage, resp.Usage)
 	finalText := strings.TrimSpace(resp.Text)
 	if action, ok := parseAction(finalText); ok && action.Action == "final" {
-		return &Response{Text: strings.TrimSpace(action.Content), Steps: steps}, nil
+		return finish(action.Content), nil
 	}
 	if !looksLikeAgentAction(finalText) {
-		return &Response{Text: finalText, Steps: steps}, nil
+		return finish(finalText), nil
 	}
 	lastText = finalText
 	if lastText == "" {
@@ -162,18 +180,19 @@ func (r *Runner) Run(ctx context.Context, req Request) (*Response, error) {
 	}
 	if action, ok := parseAction(lastText); ok && action.Action == "tool" {
 		toolName := firstNonEmpty(action.Tool, action.Name, "未知工具")
-		return &Response{
-			Text:  fmt.Sprintf("Agent 已达到工具调用上限，收尾阶段仍错误地请求工具 %s，未生成最终回复。", toolName),
-			Steps: steps,
-		}, nil
+		return finish(fmt.Sprintf("Agent 已达到工具调用上限，收尾阶段仍错误地请求工具 %s，未生成最终回复。", toolName)), nil
 	}
 	if looksLikeAgentAction(lastText) {
-		return &Response{
-			Text:  "Agent 已达到工具调用上限，但收尾阶段没有生成合法的最终回复。",
-			Steps: steps,
-		}, nil
+		return finish("Agent 已达到工具调用上限，但收尾阶段没有生成合法的最终回复。"), nil
 	}
-	return &Response{Text: lastText, Steps: steps}, nil
+	return finish(lastText), nil
+}
+
+func addLLMUsage(total llm.Usage, usage llm.Usage) llm.Usage {
+	total.InputTokens += usage.InputTokens
+	total.OutputTokens += usage.OutputTokens
+	total.TotalTokens += usage.TotalTokens
+	return total
 }
 
 // systemPrompt 构造 Agent JSON 动作协议提示词。

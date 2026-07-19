@@ -27,20 +27,36 @@
 
         <nav class="sidebar-nav" role="tablist" aria-label="功能页面">
           <button
-            v-for="tab in tabs"
-            :id="`tab-${tab.id}`"
-            :key="tab.id"
+            :id="`tab-${dashboardTab.id}`"
             type="button"
             role="tab"
-            :aria-selected="activeTab === tab.id"
-            :aria-controls="`panel-${tab.id}`"
+            :aria-selected="activeTab === dashboardTab.id"
+            :aria-controls="`panel-${dashboardTab.id}`"
             class="sidebar-tab"
-            :class="{ active: activeTab === tab.id }"
-            @click="selectTab(tab.id)"
+            :class="{ active: activeTab === dashboardTab.id }"
+            @click="selectTab(dashboardTab.id)"
           >
-            <component :is="tab.icon" :size="18" aria-hidden="true" />
-            <span>{{ tab.label }}</span>
+            <component :is="dashboardTab.icon" :size="18" aria-hidden="true" />
+            <span>{{ dashboardTab.label }}</span>
           </button>
+          <div v-for="group in sidebarGroups" :key="group.label" class="sidebar-nav-group">
+            <p>{{ group.label }}</p>
+            <button
+              v-for="tab in group.tabs"
+              :id="`tab-${tab.id}`"
+              :key="tab.id"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === tab.id"
+              :aria-controls="`panel-${tab.id}`"
+              class="sidebar-tab"
+              :class="{ active: activeTab === tab.id }"
+              @click="selectTab(tab.id)"
+            >
+              <component :is="tab.icon" :size="18" aria-hidden="true" />
+              <span>{{ tab.label }}</span>
+            </button>
+          </div>
         </nav>
 
         <div class="sidebar-user">
@@ -75,6 +91,9 @@
             </div>
             <button class="icon-button" type="button" aria-label="通知" title="通知">
               <Bell :size="17" aria-hidden="true" />
+            </button>
+            <button class="icon-button" type="button" aria-label="退出登录" title="退出登录" @click="onLogoutAdmin">
+              <LogOut :size="17" aria-hidden="true" />
             </button>
             <button class="avatar-button" type="button" aria-label="当前用户">
               <span>D</span>
@@ -129,6 +148,134 @@
                 </div>
               </div>
 
+              <div class="dashboard-chart-grid">
+                <section class="dashboard-chart-card">
+                  <div class="dashboard-section-head">
+                    <h3>今日回复率</h3>
+                    <span class="dashboard-chart-caption">{{ dashboardStats?.replied_messages ?? 0 }}/{{ dashboardStats?.received_messages ?? 0 }}</span>
+                  </div>
+                  <div class="dashboard-donut-wrap">
+                    <div class="dashboard-donut" :style="{ '--value': `${dashboardReplyRate}%` }">
+                      <span>{{ dashboardReplyRate }}%</span>
+                    </div>
+                    <div class="dashboard-chart-legend">
+                      <span><i class="ok"></i>已回复 {{ formatStatNumber(dashboardStats?.replied_messages ?? 0) }}</span>
+                      <span><i></i>收到 {{ formatStatNumber(dashboardStats?.received_messages ?? 0) }}</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="dashboard-chart-card">
+                  <div class="dashboard-section-head">
+                    <h3>今日功能统计</h3>
+                    <span class="dashboard-chart-caption">{{ formatStatNumber(dashboardStats?.api_calls ?? 0) }} API</span>
+                  </div>
+                  <div class="dashboard-bar-list">
+                    <article v-for="item in dashboardOperationBars" :key="item.label" class="dashboard-bar-item">
+                      <div>
+                        <span>{{ item.label }}</span>
+                        <strong>{{ item.value }}</strong>
+                      </div>
+                      <div class="dashboard-bar-track">
+                        <span :style="{ width: `${item.percent}%` }"></span>
+                      </div>
+                    </article>
+                  </div>
+                </section>
+
+                <section class="dashboard-chart-card dashboard-chart-card-wide">
+                  <div class="dashboard-section-head">
+                    <h3>24 小时消息流</h3>
+                    <span class="dashboard-chart-caption">消息 / 回复 / 工具</span>
+                  </div>
+                  <div class="dashboard-timeline">
+                    <article v-for="bucket in dashboardHourlyBars" :key="bucket.hour" class="dashboard-hour">
+                      <div class="dashboard-hour-bars" :title="`${bucket.hour} 消息 ${bucket.messages}，回复 ${bucket.replies}，搜索/生图 ${bucket.searches + bucket.images}`">
+                        <span class="messages" :style="{ height: `${bucket.messagePercent}%` }"></span>
+                        <span class="replies" :style="{ height: `${bucket.replyPercent}%` }"></span>
+                        <span class="tools" :style="{ height: `${bucket.toolPercent}%` }"></span>
+                      </div>
+                      <small>{{ bucket.hour.slice(0, 2) }}</small>
+                    </article>
+                  </div>
+                </section>
+
+                <section class="dashboard-chart-card dashboard-chart-card-wide dashboard-server-card">
+                  <div class="dashboard-section-head">
+                    <h3>服务器信息</h3>
+                    <span class="dashboard-chart-caption">{{ dashboardServerSubtitle }}</span>
+                  </div>
+                  <div class="dashboard-server-layout">
+                    <div class="dashboard-server-details">
+                      <section>
+                        <div class="dashboard-server-title">
+                          <Cpu :size="18" aria-hidden="true" />
+                          <h4>CPU</h4>
+                        </div>
+                        <dl class="dashboard-server-list">
+                          <div>
+                            <dt>型号</dt>
+                            <dd>{{ dashboardServer?.cpu_model || "-" }}</dd>
+                          </div>
+                          <div>
+                            <dt>核心数</dt>
+                            <dd>{{ dashboardServer?.cpu_cores || "-" }}</dd>
+                          </div>
+                          <div>
+                            <dt>系统占用</dt>
+                            <dd>{{ formatPercent(dashboardServer?.cpu_usage_percent ?? 0) }}</dd>
+                          </div>
+                          <div>
+                            <dt>Diana 进程</dt>
+                            <dd>{{ formatPercent(dashboardServer?.process_cpu_percent ?? 0) }}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                      <section>
+                        <div class="dashboard-server-title">
+                          <MemoryStick :size="18" aria-hidden="true" />
+                          <h4>内存</h4>
+                        </div>
+                        <dl class="dashboard-server-list">
+                          <div>
+                            <dt>总量</dt>
+                            <dd>{{ formatBytes(dashboardServer?.memory_total_bytes ?? 0) }}</dd>
+                          </div>
+                          <div>
+                            <dt>使用量</dt>
+                            <dd>{{ formatBytes(dashboardServer?.memory_used_bytes ?? 0) }}</dd>
+                          </div>
+                          <div>
+                            <dt>Diana 进程</dt>
+                            <dd>{{ formatBytes(dashboardServer?.process_memory_bytes ?? 0) }}</dd>
+                          </div>
+                          <div>
+                            <dt>Go Heap</dt>
+                            <dd>{{ formatBytes(dashboardServer?.go_heap_alloc_bytes ?? 0) }}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                    </div>
+                    <div class="dashboard-server-rings">
+                      <div class="dashboard-server-ring" :style="{ '--value': `${dashboardServerCPUPercent}%` }">
+                        <span>CPU 占用</span>
+                        <strong>{{ formatPercent(dashboardServerCPUPercent) }}</strong>
+                      </div>
+                      <div class="dashboard-server-ring memory" :style="{ '--value': `${dashboardServerMemoryPercent}%` }">
+                        <span>内存占用</span>
+                        <strong>{{ formatPercent(dashboardServerMemoryPercent) }}</strong>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="dashboard-server-footer">
+                    <span>{{ dashboardServerRuntimeLabel }}</span>
+                    <span>PID {{ dashboardServer?.process_id || "-" }}</span>
+                    <span>{{ dashboardServer?.go_routines ?? 0 }} goroutines</span>
+                    <span>{{ dashboardServer?.runtime_version || "-" }}</span>
+                  </div>
+                </section>
+              </div>
+
               <div class="dashboard-grid">
                 <section class="dashboard-section">
                   <div class="dashboard-section-head">
@@ -166,6 +313,29 @@
                       </div>
                     </article>
                     <div v-if="dashboardRecentEvents.length === 0" class="dashboard-empty">暂无最近消息。</div>
+                  </div>
+                </section>
+
+                <section class="dashboard-section">
+                  <div class="dashboard-section-head">
+                    <h3>订阅任务</h3>
+                    <button class="table-action" type="button" aria-label="打开 QQ 机器人" title="打开 QQ 机器人" @click="selectTab('qqbot')">
+                      <CalendarDays :size="16" aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div class="dashboard-task-list">
+                    <article v-for="task in dashboardTasks" :key="task.id" class="dashboard-task-item">
+                      <span :class="task.status === 'active' ? 'ok' : 'idle'">{{ task.kind === "schedule" ? "订阅" : "提醒" }}</span>
+                      <div>
+                        <strong>{{ task.message || "-" }}</strong>
+                        <small>
+                          {{ task.owner_id || task.group_id || task.user_id || "-" }} ·
+                          {{ task.status || "-" }} ·
+                          {{ task.trigger_at ? formatLogTime(task.trigger_at) : "-" }}
+                        </small>
+                      </div>
+                    </article>
+                    <div v-if="dashboardTasks.length === 0" class="dashboard-empty">暂无订阅或提醒任务。</div>
                   </div>
                 </section>
 
@@ -1005,7 +1175,7 @@
                     </td>
                     <td class="bot-endpoint-cell">{{ botProfileEndpointDisplay(profile) }}</td>
                     <td class="bot-id-cell">
-                      <span>{{ profile.bot_qq || profile.id || "-" }}</span>
+                      <span>{{ botProfileResolvedID(profile) || "-" }}</span>
                       <small>{{ botProfileUsername(profile) }}</small>
                     </td>
                     <td>
@@ -1287,6 +1457,63 @@
               <el-input v-model="botForm.passiveReplyPrompt" type="textarea" :rows="8" resize="vertical" aria-label="被动回复生成提示词" />
             </label>
           </form>
+
+          <div v-else-if="botDetailTab === 'rules'" class="bot-detail-body reply-rule-list">
+            <div class="reply-rule-head">
+              <div>
+                <strong>回复规则</strong>
+                <small>先由路由 prompt 判断，命中后临时切模型或转成语音回复。</small>
+              </div>
+              <button class="button primary" type="button" @click="addReplyRule">
+                <Plus :size="16" aria-hidden="true" />
+                <span>新增规则</span>
+              </button>
+            </div>
+
+            <article v-for="(rule, index) in botForm.replyRules" :key="rule.id" class="reply-rule-card">
+              <div class="reply-rule-card-head">
+                <label>
+                  <span>名称</span>
+                  <input v-model.trim="rule.name" autocomplete="off" placeholder="例如：语音回复" />
+                </label>
+                <div class="reply-rule-actions">
+                  <el-switch v-model="rule.enabled" aria-label="启用规则" />
+                  <button class="table-action danger" type="button" aria-label="删除规则" title="删除规则" @click="removeReplyRule(index)">
+                    <Trash2 :size="16" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+
+              <div class="reply-rule-grid">
+                <label>
+                  <span>命中后动作</span>
+                  <el-select v-model="rule.action" aria-label="命中后动作">
+                    <el-option label="使用特定模型" value="model" />
+                    <el-option label="使用语音回复" value="voice" />
+                  </el-select>
+                </label>
+                <label>
+                  <span>特定模型</span>
+                  <el-select v-model="rule.llmProfileID" clearable filterable placeholder="沿用当前模型" aria-label="特定模型">
+                    <el-option v-for="profile in llmProfiles" :key="profile.id || profile.model" :label="replyRuleProfileLabel(profile)" :value="profile.id || ''" />
+                  </el-select>
+                </label>
+              </div>
+
+              <label class="reply-rule-prompt">
+                <span>判断 prompt</span>
+                <el-input
+                  v-model="rule.prompt"
+                  type="textarea"
+                  :rows="5"
+                  resize="vertical"
+                  placeholder="例如：当用户明确要求语音、朗读、念出来，或当前消息更适合语音表达时命中。只判断当前发言，历史消息只能作为参考。"
+                />
+              </label>
+            </article>
+
+            <div v-if="botForm.replyRules.length === 0" class="empty-state plugin-empty">暂无回复规则。</div>
+          </div>
 
           <div v-else-if="botDetailTab === 'events'" class="bot-detail-body bot-event-list">
             <article v-for="event in botRecentEvents" :key="`${event.at}-${event.kind}-${event.user_id || event.group_id}`">
@@ -2042,7 +2269,7 @@
           <div class="panel-head-meta">
             <div class="model-chip">
               <ShieldCheck :size="15" aria-hidden="true" />
-              <span>{{ adminAccessSettings.configured ? "Token 已启用" : "未启用 Token" }}</span>
+              <span>{{ adminAccessSettings.configured ? "账号密码已启用" : "未启用登录" }}</span>
             </div>
             <div v-if="adminAccessSettings.managed_by_environment" class="status">
               <span>环境变量托管</span>
@@ -2054,10 +2281,10 @@
           <section class="access-settings-surface" aria-labelledby="admin-access-title">
             <div class="access-setting-row">
               <div>
-                <h3 id="admin-access-title">随机登录后缀</h3>
+                <h3 id="admin-access-title">随机登录入口</h3>
                 <span>{{ adminAccessSettings.random_suffix_enabled ? "已启用" : "已关闭" }}</span>
               </div>
-              <label class="plugin-toggle" aria-label="随机登录后缀">
+              <label class="plugin-toggle" aria-label="随机登录入口">
                 <input
                   v-model="adminAccessSettings.random_suffix_enabled"
                   type="checkbox"
@@ -2065,6 +2292,13 @@
                 />
                 <span />
               </label>
+            </div>
+
+            <div class="access-path-block">
+              <span>默认账号</span>
+              <div class="access-path-row">
+                <code>{{ adminAccessSettings.username || "admin@diana.local" }}</code>
+              </div>
             </div>
 
             <div class="access-path-block">
@@ -2322,6 +2556,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Cpu,
   CloudSun,
   Download,
   Eye,
@@ -2335,6 +2570,8 @@ import {
   Image,
   Link2,
   ListChecks,
+  LogOut,
+  MemoryStick,
   MessageCircle,
   MoreHorizontal,
   MoreVertical,
@@ -2380,12 +2617,16 @@ import {
   getWebSearchConfig,
   getQQBotFeatures,
   getQQBotConfig,
+  getQQBotAutoInfo,
+  getQQBotDashboardStats,
   getQQBotStatus,
   getUpdateStatus,
   installPlugin,
   listAppLogs,
   listLLMModels,
+  listQQBotTasks,
   listPlugins,
+  logoutAdmin,
   getQQBotGroupAdminConfig,
   requestQQBotGroupAdminChallenge,
   saveConfig,
@@ -2413,10 +2654,15 @@ import {
   type PluginState,
   type Provider,
   type QQBotConfig,
+  type QQBotAutoInfo,
+  type QQBotDashboardStats,
   type QQBotFeatureFlags,
   type QQBotGroupAdminConfigResponse,
   type QQBotGroupConfig,
+  type QQBotTask,
   type QQGroupTestResponse,
+  type ReplyRule,
+  type ReplyRuleAction,
   type QQBotStatus,
   type UpdateStatus,
   type WebSearchConfig,
@@ -2466,6 +2712,15 @@ interface HeaderRow {
   value: string;
 }
 
+interface ReplyRuleFormState {
+  id: string;
+  name: string;
+  enabled: boolean;
+  prompt: string;
+  action: ReplyRuleAction;
+  llmProfileID: string;
+}
+
 interface BotFormState {
   id: string;
   name: string;
@@ -2500,6 +2755,7 @@ interface BotFormState {
   contextSummaryThreshold: number;
   passiveReplyChance: number;
   passiveReplyThreshold: number;
+  replyRules: ReplyRuleFormState[];
   maxBotConcurrency: number;
   requestTimeoutMS: number;
   agentEnabled: boolean;
@@ -2600,7 +2856,7 @@ const providerOptions = [
   { value: "gemini" as const, label: "Gemini", icon: Sparkles },
   { value: "anthropic" as const, label: "Anthropic", icon: BrainCircuit }
 ];
-const appVersion = "0.0.1";
+const appVersion = "0.1.0";
 
 const defaultTestSessions: TestSession[] = [
   {
@@ -2819,7 +3075,7 @@ type PluginCategory = "all" | "analysis" | "dialog" | "tool" | "management";
 type LogViewFilter = "all" | AppLogKind;
 type LogLevelFilter = "all" | AppLogLevel | "warn";
 type BotPlatformFilter = "all" | "telegram" | "qq" | "discord" | "slack" | "wechat" | "custom";
-type BotDetailTab = "config" | "prompts" | "events" | "messages" | "test";
+type BotDetailTab = "config" | "prompts" | "rules" | "events" | "messages" | "test";
 type LLMEditorMode = "list" | "edit";
 
 interface PluginDetailRow {
@@ -2852,6 +3108,13 @@ const tabs = [
   { id: "logs" as const, label: "日志中心", icon: FileClock },
   { id: "security" as const, label: "访问设置", icon: ShieldCheck },
   { id: "theme" as const, label: "主题配置", icon: Sparkles }
+];
+const dashboardTab = tabs[0];
+const sidebarGroups: Array<{ label: string; tabs: typeof tabs }> = [
+  { label: "模型", tabs: tabs.filter((tab) => tab.id === "llm" || tab.id === "test") },
+  { label: "机器人", tabs: tabs.filter((tab) => tab.id === "qqbot" || tab.id === "group-admin") },
+  { label: "能力", tabs: tabs.filter((tab) => tab.id === "plugins" || tab.id === "web-search") },
+  { label: "系统", tabs: tabs.filter((tab) => tab.id === "logs" || tab.id === "security" || tab.id === "theme") }
 ];
 const tabRoutes: Record<TabID, string> = {
   dashboard: "/console",
@@ -2896,6 +3159,7 @@ const botPlatformOptions: Array<{ value: BotPlatformFilter; label: string }> = [
 const botDetailTabs: Array<{ value: BotDetailTab; label: string }> = [
   { value: "config", label: "配置" },
   { value: "prompts", label: "提示词" },
+  { value: "rules", label: "回复规则" },
   { value: "events", label: "事件日志" },
   { value: "messages", label: "消息记录" },
   { value: "test", label: "连接测试" }
@@ -2959,6 +3223,7 @@ const botForm = reactive<BotFormState>({
   contextSummaryThreshold: 100,
   passiveReplyChance: 1,
   passiveReplyThreshold: 0.8,
+  replyRules: [],
   maxBotConcurrency: 8,
   requestTimeoutMS: 180000,
   agentEnabled: true,
@@ -3010,6 +3275,7 @@ const groupAdmin = reactive<GroupAdminState>({
 const status = reactive({ text: "读取中", kind: "" });
 const adminAccessSettings = reactive<AdminAccessSettings>({
   configured: false,
+  username: "admin@diana.local",
   random_suffix_enabled: false,
   login_path: "/",
   managed_by_environment: false
@@ -3061,11 +3327,14 @@ const llmImportFileRef = ref<HTMLInputElement | null>(null);
 const activeTab = ref<TabID>("dashboard");
 const sidebarOpen = ref(false);
 const botStatus = ref<QQBotStatus | null>(null);
+const botAutoInfo = ref<QQBotAutoInfo | null>(null);
 const botGroupTestResult = ref<QQGroupTestResponse | null>(null);
 const botGroupTestError = ref("");
 const plugins = ref<PluginState[]>([]);
 const updateStatus = ref<UpdateStatus | null>(null);
 const appLogs = ref<AppLogEntry[]>([]);
+const qqbotTasks = ref<QQBotTask[]>([]);
+const qqbotDashboardStats = ref<QQBotDashboardStats | null>(null);
 const fetchedModelOptions = ref<LLMModelInfo[]>([]);
 const modelMenuOpen = ref(false);
 const modelSelectRef = ref<HTMLElement | null>(null);
@@ -3401,6 +3670,14 @@ function isSelectedBotProfile(profile: QQBotConfig): boolean {
 function botProfileKey(profile: QQBotConfig): string {
   return profile.id || profile.name || profile.bot_qq || botProfilePlatformLabel(profile);
 }
+function botProfileResolvedID(profile?: QQBotConfig | null): string {
+  const configured = profile?.bot_qq?.trim();
+  if (configured) return configured;
+  if (profile?.id === activeBotProfile.value?.id && botStatus.value?.channel.self_id) {
+    return botStatus.value.channel.self_id;
+  }
+  return profile?.id?.trim() || "";
+}
 function normalizeBotPlatform(profile?: QQBotConfig | null): BotPlatformFilter {
   const value = `${profile?.platform || ""} ${profile?.onebot_reverse_ws_endpoint || ""}`.toLowerCase();
   if (/(telegram|tg|api\.telegram)/.test(value)) return "telegram";
@@ -3438,7 +3715,7 @@ function botProfileSubtitle(profile?: QQBotConfig | null): string {
   return "系统集成";
 }
 function botProfileUsername(profile?: QQBotConfig | null): string {
-  const id = profile?.bot_qq?.trim() || profile?.id?.trim() || "";
+  const id = botProfileResolvedID(profile);
   if (!id) return "@未绑定";
   return id.startsWith("@") ? id : `@${id}`;
 }
@@ -3849,31 +4126,94 @@ const dashboardBotDetail = computed(() => {
 const dashboardRecentEvents = computed(() => botRecentEvents.value.slice(0, 5));
 const dashboardLogs = computed(() => appLogs.value.slice(0, 5));
 const dashboardPlugins = computed(() => plugins.value.filter((plugin) => plugin.installed).slice(0, 5));
+const dashboardTasks = computed(() => qqbotTasks.value.slice(0, 5));
+const activeSubscriptionCount = computed(() => qqbotTasks.value.filter((task) => task.kind === "schedule" && task.status === "active").length);
 const enabledWebSearchCount = computed(() => webSearchConfig.providers.filter((provider) => !provider.disabled && webSearchProviderReady(provider)).length);
+const dashboardStats = computed(() => qqbotDashboardStats.value);
+const dashboardServer = computed(() => dashboardStats.value?.server);
+const dashboardServerCPUPercent = computed(() => clampDashboardPercent(dashboardServer.value?.cpu_usage_percent ?? 0));
+const dashboardServerMemoryPercent = computed(() => clampDashboardPercent(dashboardServer.value?.memory_usage_percent ?? 0));
+const dashboardServerSubtitle = computed(() => {
+  const server = dashboardServer.value;
+  if (!server) return "等待采样";
+  const host = server.hostname || "localhost";
+  return `${host} · ${server.os}/${server.arch}`;
+});
+const dashboardServerRuntimeLabel = computed(() => {
+  const seconds = dashboardServer.value?.process_uptime_seconds ?? 0;
+  if (seconds <= 0) return "运行时长 -";
+  return `运行 ${formatDurationShort(seconds)}`;
+});
+const dashboardReplyRate = computed(() => {
+  const stats = dashboardStats.value;
+  if (!stats || stats.received_messages <= 0) return 0;
+  return Math.min(100, Math.round((stats.replied_messages / stats.received_messages) * 100));
+});
+const dashboardOperationBars = computed<Array<{ label: string; value: string; percent: number }>>(() => {
+  const stats = dashboardStats.value;
+  const measures = stats?.operation_breakdown?.length
+    ? stats.operation_breakdown
+    : [
+        { label: "文本回复", value: stats?.text_replies ?? 0 },
+        { label: "生图/修图", value: (stats?.image_generations ?? 0) + (stats?.image_edits ?? 0) },
+        { label: "联网搜索", value: stats?.search_calls ?? 0 },
+        { label: "LLM API", value: stats?.llm_calls ?? 0 }
+      ];
+  const maxValue = Math.max(1, ...measures.map((item) => item.value));
+  return measures.map((item) => ({
+    label: item.label,
+    value: formatStatNumber(item.value),
+    percent: item.value > 0 ? Math.max(2, Math.round((item.value / maxValue) * 100)) : 0
+  }));
+});
+const dashboardHourlyMax = computed(() => {
+  const buckets = dashboardStats.value?.hourly || [];
+  return Math.max(1, ...buckets.map((item) => Math.max(item.messages, item.replies, item.searches + item.images)));
+});
+const dashboardHourlyBars = computed(() =>
+  (dashboardStats.value?.hourly || []).map((item) => ({
+    ...item,
+    messagePercent: item.messages > 0 ? Math.max(3, Math.round((item.messages / dashboardHourlyMax.value) * 100)) : 0,
+    replyPercent: item.replies > 0 ? Math.max(3, Math.round((item.replies / dashboardHourlyMax.value) * 100)) : 0,
+    toolPercent: item.searches + item.images > 0 ? Math.max(3, Math.round(((item.searches + item.images) / dashboardHourlyMax.value) * 100)) : 0
+  }))
+);
 const dashboardMetrics = computed<Array<{ label: string; value: string; detail: string; icon: IconComponent }>>(() => [
   {
-    label: "当前模型",
-    value: activeLLMProfile.value?.model || "-",
-    detail: `${providerDisplayLabel(activeLLMProfile.value?.provider)} · ${profileGroupLabel(activeLLMProfile.value)}`,
-    icon: BrainCircuit
+    label: "今日消息",
+    value: formatStatNumber(dashboardStats.value?.received_messages ?? 0),
+    detail: dashboardStats.value?.since ? `从 ${formatDashboardTime(dashboardStats.value.since)} 起` : "收到的群聊和私聊消息",
+    icon: MessageCircle
   },
   {
-    label: "插件",
-    value: `${enabledPluginCount.value}/${installedPluginCount.value}`,
-    detail: updatablePluginCount.value > 0 ? `${updatablePluginCount.value} 个可能可更新` : "已安装插件启用情况",
-    icon: PlugZap
+    label: "今日回复",
+    value: formatStatNumber(dashboardStats.value?.replied_messages ?? 0),
+    detail: `回复率 ${dashboardReplyRate.value}%`,
+    icon: Send
+  },
+  {
+    label: "生图/修图",
+    value: formatStatNumber((dashboardStats.value?.image_generations ?? 0) + (dashboardStats.value?.image_edits ?? 0)),
+    detail: `${formatStatNumber(dashboardStats.value?.image_generations ?? 0)} 次生图 / ${formatStatNumber(dashboardStats.value?.image_edits ?? 0)} 次修图`,
+    icon: Image
   },
   {
     label: "联网搜索",
-    value: `${enabledWebSearchCount.value}/${webSearchConfig.providers.length}`,
-    detail: webSearchConfig.overridden_by_env ? "环境变量托管" : "WebUI 配置",
-    icon: Globe
+    value: formatStatNumber(dashboardStats.value?.search_calls ?? 0),
+    detail: `${enabledWebSearchCount.value}/${webSearchConfig.providers.length} 个搜索源可用`,
+    icon: Search
   },
   {
-    label: "最近错误",
-    value: String(errorLogCount.value),
-    detail: latestAppLog.value ? formatLogTime(latestAppLog.value.created_at) : "暂无日志",
-    icon: FileClock
+    label: "API 调用",
+    value: formatStatNumber(dashboardStats.value?.api_calls ?? 0),
+    detail: `${formatStatNumber(dashboardStats.value?.llm_calls ?? 0)} 次 LLM 调用`,
+    icon: Activity
+  },
+  {
+    label: "Token 消耗",
+    value: formatCompactNumber(dashboardStats.value?.llm_total_tokens ?? 0),
+    detail: `输入 ${formatCompactNumber(dashboardStats.value?.llm_input_tokens ?? 0)} / 输出 ${formatCompactNumber(dashboardStats.value?.llm_output_tokens ?? 0)}`,
+    icon: Zap
   }
 ]);
 const dashboardHealthItems = computed<Array<{ label: string; value: string; detail: string; tone: string; icon: IconComponent }>>(() => [
@@ -4649,6 +4989,31 @@ function isPresetModel(provider: Provider, model: string): boolean {
   return Boolean(id && textModelPresets[provider]?.some((option) => option.id === id));
 }
 
+function createReplyRule(rule?: ReplyRule): ReplyRuleFormState {
+  return {
+    id: rule?.id || `rule-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: rule?.name || "回复规则",
+    enabled: rule?.enabled !== false,
+    prompt: rule?.prompt || "",
+    action: rule?.action === "voice" ? "voice" : "model",
+    llmProfileID: rule?.llm_profile_id || ""
+  };
+}
+
+function addReplyRule() {
+  botForm.replyRules.push(createReplyRule());
+  botDetailTab.value = "rules";
+}
+
+function removeReplyRule(index: number) {
+  botForm.replyRules.splice(index, 1);
+}
+
+function replyRuleProfileLabel(profile: LLMConfig): string {
+  const name = profile.name || profile.model || "未命名配置";
+  return `${name} · ${providerDisplayLabel(profile.provider)} / ${profile.model || "-"}`;
+}
+
 function loadBotFormProfile(config: QQBotConfig) {
   botForm.id = config.id || "";
   botForm.name = config.name || "默认机器人";
@@ -4683,6 +5048,7 @@ function loadBotFormProfile(config: QQBotConfig) {
   botForm.contextSummaryThreshold = config.context_summary_threshold || 100;
   botForm.passiveReplyChance = config.passive_reply_chance || 1;
   botForm.passiveReplyThreshold = config.passive_reply_threshold || 0.8;
+  botForm.replyRules = (config.reply_rules || []).map((rule) => createReplyRule(rule));
   botForm.maxBotConcurrency = config.max_bot_concurrency || 8;
   botForm.requestTimeoutMS = config.request_timeout_ms || 180000;
   botForm.agentEnabled = Boolean(config.agent_enabled);
@@ -4697,6 +5063,88 @@ function loadBotFormProfile(config: QQBotConfig) {
   lastSavedBotPayload.value = botPayload();
 }
 
+function applyQQAutoInfo(info?: QQBotAutoInfo | null, options: { persistCandidateOwner?: boolean } = {}): boolean {
+  if (!info) return false;
+  let changed = false;
+  const botQQ = (info.bot_qq || "").trim();
+  if (botQQ && botForm.botQQ !== botQQ) {
+    botForm.botQQ = botQQ;
+    changed = true;
+  }
+  const avatarURL = (info.avatar_url || "").trim();
+  if (avatarURL && botForm.avatarURL !== avatarURL && (!botForm.avatarURL || /qlogo\.cn/.test(botForm.avatarURL))) {
+    botForm.avatarURL = avatarURL;
+    changed = true;
+  }
+  const nickname = (info.nickname || "").trim();
+  if (nickname && shouldReplaceBotDefaultName(botForm.name)) {
+    botForm.name = nickname;
+    changed = true;
+  }
+  const verifiedOwner = groupAdminVerified.value ? groupAdmin.form.userID.trim() : "";
+  if (!botForm.ownerID && options.persistCandidateOwner && verifiedOwner) {
+    botForm.ownerID = verifiedOwner;
+    changed = true;
+  }
+  const groupID = firstAutoGroupID(info);
+  if (groupID && !botGroupTest.groupID) {
+    botGroupTest.groupID = groupID;
+  }
+  if (groupID && !groupAdmin.form.groupID) {
+    groupAdmin.form.groupID = groupID;
+  }
+  return changed;
+}
+
+function shouldReplaceBotDefaultName(name: string): boolean {
+  const normalized = name.trim();
+  return !normalized || normalized === "默认机器人" || normalized === "未命名机器人";
+}
+
+function firstAutoGroupID(info: QQBotAutoInfo): string {
+  return (info.recent_group_id || info.groups?.[0]?.group_id || "").trim();
+}
+
+async function refreshQQBotAutoInfo(options: { save?: boolean; quiet?: boolean } = {}): Promise<boolean> {
+  try {
+    const info = await getQQBotAutoInfo();
+    botAutoInfo.value = info;
+    const changed = applyQQAutoInfo(info, { persistCandidateOwner: true });
+    if (changed && options.save) {
+      applyBotConfig(await saveQQBotConfig(botPayload()));
+      await refreshBotStatus();
+    } else if (changed) {
+      const payload = botPayload();
+      patchActiveBotProfile(payload);
+    }
+    if (!options.quiet) {
+      const label = info.bot_qq ? `已获取 QQ ${info.bot_qq}` : "未获取到登录 QQ";
+      setStatus(label, info.bot_qq ? "ok" : undefined);
+    }
+    return changed;
+  } catch (error) {
+    if (!options.quiet) {
+      setStatus("自动获取 QQ 信息失败", "bad");
+      output.value = error instanceof Error ? error.message : String(error);
+    }
+    return false;
+  }
+}
+
+function patchActiveBotProfile(payload: QQBotConfig) {
+  if (!botForm.id) return;
+  botProfiles.value = botProfiles.value.map((profile) => {
+    if (profile.id !== botForm.id) return profile;
+    return {
+      ...profile,
+      name: payload.name,
+      avatar_url: payload.avatar_url,
+      bot_qq: payload.bot_qq,
+      owner_id: payload.owner_id
+    };
+  });
+}
+
 function applyBotConfig(config: QQBotConfig) {
   botProfiles.value = config.profiles || [];
   botActiveProfileID.value = config.active_profile_id || config.id || botProfiles.value[0]?.id || "";
@@ -4705,7 +5153,15 @@ function applyBotConfig(config: QQBotConfig) {
 }
 
 async function refreshBotConfig() {
-  applyBotConfig(await getQQBotConfig());
+  setStatus("同步机器人配置");
+  const [config, statusPayload] = await Promise.all([getQQBotConfig(), getQQBotStatus().catch(() => botStatus.value)]);
+  applyBotConfig(config);
+  if (statusPayload) {
+    botStatus.value = statusPayload;
+    plugins.value = statusPayload.plugins || plugins.value;
+  }
+  const changed = await refreshQQBotAutoInfo({ save: true, quiet: true });
+  setStatus(changed ? "已同步并补全 QQ 信息" : "机器人配置已同步", "ok");
 }
 
 function resetBotChanges() {
@@ -4768,6 +5224,16 @@ function botPayload(): QQBotConfig {
     context_summary_threshold: botForm.contextSummaryThreshold || 0,
     passive_reply_chance: botForm.passiveReplyChance || 0,
     passive_reply_threshold: botForm.passiveReplyThreshold || 0,
+    reply_rules: botForm.replyRules
+      .map((rule) => ({
+        id: rule.id,
+        name: rule.name.trim() || "回复规则",
+        enabled: rule.enabled,
+        prompt: rule.prompt.trim(),
+        action: rule.action,
+        llm_profile_id: rule.llmProfileID || undefined
+      }))
+      .filter((rule) => rule.prompt),
     max_bot_concurrency: botForm.maxBotConcurrency || 0,
     request_timeout_ms: botForm.requestTimeoutMS || 0,
     agent_enabled: botForm.agentEnabled,
@@ -5023,9 +5489,21 @@ async function copyAdminLoginURL() {
   }
 }
 
+async function onLogoutAdmin() {
+  const loginPath = adminAccessSettings.login_path || "/";
+  try {
+    rememberAdminLoginPath(loginPath);
+    await logoutAdmin();
+  } catch {
+    // 退出失败时仍回到登录入口，让下一次请求重新校验会话。
+  } finally {
+    window.location.replace(loginPath);
+  }
+}
+
 async function load() {
   try {
-    const [llmConfig, botConfig, statusPayload, pluginPayload, featurePayload, webSearchPayload, adminAccessPayload, logsPayload] = await Promise.all([
+    const [llmConfig, botConfig, statusPayload, pluginPayload, featurePayload, webSearchPayload, adminAccessPayload, logsPayload, taskPayload, statsPayload, autoInfoPayload] = await Promise.all([
       getConfig(true),
       getQQBotConfig(),
       getQQBotStatus(),
@@ -5033,7 +5511,10 @@ async function load() {
       getQQBotFeatures().catch(() => ({ group_test: false })),
       getWebSearchConfig(),
       getAdminAccessSettings(),
-      listAppLogs(undefined, 10).catch(() => ({ logs: [] }))
+      listAppLogs(undefined, 10).catch(() => ({ logs: [] })),
+      listQQBotTasks().catch(() => ({ items: [] })),
+      getQQBotDashboardStats().catch(() => null),
+      getQQBotAutoInfo().catch(() => null)
     ]);
     applyLLMConfig(llmConfig);
     applyBotConfig(botConfig);
@@ -5045,6 +5526,13 @@ async function load() {
     }
     plugins.value = pluginPayload;
     appLogs.value = sortAppLogs(logsPayload.logs || []);
+    qqbotTasks.value = taskPayload.items || [];
+    qqbotDashboardStats.value = statsPayload;
+    botAutoInfo.value = autoInfoPayload;
+    const autoChanged = applyQQAutoInfo(autoInfoPayload, { persistCandidateOwner: true });
+    if (autoChanged) {
+      await saveQQBotConfig(botPayload()).then(applyBotConfig).catch(() => undefined);
+    }
     applyWebSearchConfig(webSearchPayload);
     applyAdminAccessSettings(adminAccessPayload);
     void refreshUpdateStatus(false);
@@ -5107,15 +5595,19 @@ async function refreshDashboard() {
   loadingLogs.value = true;
   setStatus("刷新仪表盘");
   try {
-    const [statusPayload, pluginPayload, logsPayload, updatePayload] = await Promise.all([
+    const [statusPayload, pluginPayload, logsPayload, updatePayload, taskPayload, statsPayload] = await Promise.all([
       getQQBotStatus(),
       listPlugins(),
       listAppLogs(undefined, 10),
-      getUpdateStatus().catch(() => updateStatus.value)
+      getUpdateStatus().catch(() => updateStatus.value),
+      listQQBotTasks().catch(() => ({ items: qqbotTasks.value })),
+      getQQBotDashboardStats().catch(() => qqbotDashboardStats.value)
     ]);
     botStatus.value = statusPayload;
     plugins.value = pluginPayload;
     appLogs.value = sortAppLogs(logsPayload.logs || []);
+    qqbotTasks.value = taskPayload.items || [];
+    qqbotDashboardStats.value = statsPayload;
     if (updatePayload) {
       updateStatus.value = updatePayload;
       updateOutput.value = updatePayload.last_update_text || updateOutput.value;
@@ -5195,6 +5687,62 @@ function onLogJumpChange(event: Event) {
 
 function formatLogTime(value: string): string {
   return formatLogTableTime(value);
+}
+
+function formatDashboardTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  const pad = (input: number) => String(input).padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatStatNumber(value: number): string {
+  return new Intl.NumberFormat("zh-CN").format(Math.max(0, Math.round(Number(value) || 0)));
+}
+
+function formatCompactNumber(value: number): string {
+  const numeric = Math.max(0, Math.round(Number(value) || 0));
+  if (numeric >= 10000) {
+    return `${(numeric / 10000).toFixed(numeric >= 100000 ? 0 : 1)}万`;
+  }
+  return formatStatNumber(numeric);
+}
+
+function formatBytes(value: number): string {
+  const numeric = Math.max(0, Number(value) || 0);
+  if (numeric <= 0) return "-";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let unitIndex = 0;
+  let size = numeric;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const digits = unitIndex >= 3 ? 2 : unitIndex === 0 ? 0 : 1;
+  return `${size.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatPercent(value: number): string {
+  const numeric = clampDashboardPercent(value);
+  return `${numeric.toFixed(numeric >= 10 ? 0 : 1)}%`;
+}
+
+function clampDashboardPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Number(value)));
+}
+
+function formatDurationShort(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days > 0) return `${days}天 ${hours}小时`;
+  if (hours > 0) return `${hours}小时 ${minutes}分`;
+  if (minutes > 0) return `${minutes}分`;
+  return `${total}秒`;
 }
 
 function formatLogTableTime(value: string): string {
@@ -5770,6 +6318,7 @@ async function onStartBot() {
   try {
     botStatus.value = await startQQBot();
     plugins.value = botStatus.value.plugins;
+    await refreshQQBotAutoInfo({ save: true, quiet: true });
     setStatus("机器人已启动", "ok");
   } catch (error) {
     setStatus("启动失败", "bad");

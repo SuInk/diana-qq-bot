@@ -15,6 +15,7 @@ import (
 
 const (
 	adminSessionCookieName = "diana_admin_session"
+	defaultAdminUsername   = "admin@diana.local"
 	defaultAdminSessionTTL = 12 * time.Hour
 	adminLoginWindow       = 5 * time.Minute
 	adminLoginBlock        = 15 * time.Minute
@@ -26,6 +27,7 @@ var adminLoginPathPattern = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9_-]{10,12
 // AdminAuthConfig configures the management-plane token gate.
 type AdminAuthConfig struct {
 	Token      string
+	Username   string
 	LoginPath  string
 	SessionTTL time.Duration
 }
@@ -33,6 +35,7 @@ type AdminAuthConfig struct {
 // AdminAuth protects the WebUI and management APIs without affecting OneBot traffic.
 type AdminAuth struct {
 	token      string
+	username   string
 	loginPath  string
 	sessionTTL time.Duration
 
@@ -49,7 +52,9 @@ type adminLoginAttempt struct {
 }
 
 type adminLoginPayload struct {
-	Token string `json:"token"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
 }
 
 // NewAdminAuth builds the admin authentication service. An empty token keeps
@@ -58,6 +63,10 @@ func NewAdminAuth(cfg AdminAuthConfig) (*AdminAuth, error) {
 	token := strings.TrimSpace(cfg.Token)
 	if token != "" && len(token) < 32 {
 		return nil, fmt.Errorf("DIANA_ADMIN_TOKEN must contain at least 32 characters")
+	}
+	username := strings.TrimSpace(cfg.Username)
+	if username == "" {
+		username = defaultAdminUsername
 	}
 	loginPath, err := normalizeAdminLoginPath(cfg.LoginPath, token)
 	if err != nil {
@@ -69,6 +78,7 @@ func NewAdminAuth(cfg AdminAuthConfig) (*AdminAuth, error) {
 	}
 	return &AdminAuth{
 		token:      token,
+		username:   username,
 		loginPath:  loginPath,
 		sessionTTL: sessionTTL,
 		sessions:   map[string]time.Time{},
@@ -115,9 +125,7 @@ func (a *AdminAuth) Register(router gin.IRouter) {
 	router.POST("/api/auth/logout", a.logout)
 }
 
-// Middleware protects all management APIs and known console routes. It returns
-// 404 for unauthenticated console pages so the hidden login path is never leaked
-// through a redirect target.
+// Middleware protects all management APIs and known console routes.
 func (a *AdminAuth) Middleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !a.Enabled() || a.isPublicPath(c.Request.URL.Path) {
@@ -134,7 +142,9 @@ func (a *AdminAuth) Middleware() gin.HandlerFunc {
 			return
 		}
 		if isAdminConsolePath(c.Request.URL.Path) && !a.authenticated(c) {
-			c.AbortWithStatus(http.StatusNotFound)
+			c.Header("Cache-Control", "no-store")
+			c.Redirect(http.StatusFound, a.loginPath)
+			c.Abort()
 			return
 		}
 		c.Next()
@@ -155,7 +165,7 @@ func (a *AdminAuth) isPublicPath(requestPath string) bool {
 func isAdminConsolePath(requestPath string) bool {
 	requestPath = strings.TrimSuffix(requestPath, "/")
 	switch requestPath {
-	case "/console", "/admin", "/webui", "/llm", "/test", "/qqbot", "/groups", "/plugins", "/web-search", "/logs", "/security", "/theme":
+	case "/console", "/admin", "/webui", "/llm", "/test", "/qqbot", "/robots", "/groups", "/plugins", "/web-search", "/logs", "/security", "/theme":
 		return true
 	default:
 		return false
@@ -173,6 +183,7 @@ func (a *AdminAuth) status(c *gin.Context) {
 		"configured":    a.Enabled(),
 		"authenticated": authenticated,
 		"login_page":    secureEqual(candidatePath, a.loginPath),
+		"username":      a.username,
 	})
 }
 
@@ -198,13 +209,13 @@ func (a *AdminAuth) login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
-	if !secureEqual(strings.TrimSpace(payload.Token), a.token) {
+	if !a.validLoginPayload(payload) {
 		if retryAfter, blocked := a.recordLoginFailure(clientKey, now); blocked {
 			c.Header("Retry-After", fmt.Sprintf("%d", max(1, int(retryAfter.Seconds()))))
 			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many login attempts"})
 			return
 		}
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid admin token"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid account or password"})
 		return
 	}
 	sessionID, err := randomToken()
@@ -220,6 +231,13 @@ func (a *AdminAuth) login(c *gin.Context) {
 	a.mu.Unlock()
 	a.setSessionCookie(c, sessionID, expiresAt)
 	c.JSON(http.StatusOK, gin.H{"authenticated": true, "expires_at": expiresAt.UTC()})
+}
+
+func (a *AdminAuth) validLoginPayload(payload adminLoginPayload) bool {
+	if strings.TrimSpace(payload.Token) != "" {
+		return secureEqual(strings.TrimSpace(payload.Token), a.token)
+	}
+	return secureEqual(strings.TrimSpace(payload.Username), a.username) && secureEqual(strings.TrimSpace(payload.Password), a.token)
 }
 
 func (a *AdminAuth) logout(c *gin.Context) {
