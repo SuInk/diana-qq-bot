@@ -1012,6 +1012,7 @@ h2 {
 }
 
 .dashboard-main-status {
+  width: 100%;
   min-height: 142px;
   padding: 18px;
   border: 1px solid var(--line);
@@ -1020,6 +1021,49 @@ h2 {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.dashboard-link-card {
+  position: relative;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.dashboard-link-card:hover {
+  border-color: color-mix(in srgb, var(--primary), var(--line) 35%);
+  background: color-mix(in srgb, var(--control), var(--primary) 5%);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--primary), transparent 88%);
+  transform: translateY(-1px);
+}
+
+.dashboard-link-card:focus-visible,
+.dashboard-bar-item:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--focus), transparent 68%);
+  outline-offset: 2px;
+}
+
+.dashboard-link-card:active {
+  transform: translateY(0);
+}
+
+.dashboard-card-link-icon {
+  position: absolute;
+  top: 13px;
+  right: 12px;
+  color: var(--muted) !important;
+  opacity: 0.58;
+  transition: color 160ms ease, opacity 160ms ease, transform 160ms ease;
+}
+
+.dashboard-link-card:hover .dashboard-card-link-icon,
+.dashboard-link-card:focus-visible .dashboard-card-link-icon {
+  color: var(--primary) !important;
+  opacity: 1;
+  transform: translateX(2px);
 }
 
 .dashboard-main-status.ok {
@@ -1090,6 +1134,8 @@ h2 {
 }
 
 .dashboard-metric {
+  position: relative;
+  width: 100%;
   min-height: 116px;
   padding: 14px;
   display: grid;
@@ -1212,8 +1258,24 @@ h2 {
 
 .dashboard-bar-item {
   min-width: 0;
+  width: calc(100% + 8px);
+  margin: -4px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  cursor: pointer;
   display: grid;
   gap: 6px;
+  transition: background-color 160ms ease;
+}
+
+.dashboard-bar-item:hover {
+  background: color-mix(in srgb, var(--primary), transparent 94%);
 }
 
 .dashboard-bar-item > div:first-child {
@@ -1228,6 +1290,18 @@ h2 {
 
 .dashboard-bar-item strong {
   color: var(--field-text);
+}
+
+.dashboard-bar-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--muted);
+}
+
+.dashboard-bar-item:hover .dashboard-bar-value,
+.dashboard-bar-item:focus-visible .dashboard-bar-value {
+  color: var(--primary);
 }
 
 .dashboard-bar-track {

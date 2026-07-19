@@ -128,7 +128,13 @@
               </div>
 
               <div class="dashboard-hero">
-                <div class="dashboard-main-status" :class="dashboardBotTone">
+                <button
+                  class="dashboard-main-status dashboard-link-card"
+                  :class="dashboardBotTone"
+                  type="button"
+                  aria-label="打开 QQ 机器人管理"
+                  @click="selectTab('qqbot')"
+                >
                   <div class="dashboard-status-icon">
                     <BotMessageSquare :size="24" aria-hidden="true" />
                   </div>
@@ -137,14 +143,23 @@
                     <strong>{{ dashboardBotStateLabel }}</strong>
                     <small>{{ dashboardBotDetail }}</small>
                   </div>
-                </div>
+                  <ChevronRight class="dashboard-card-link-icon" :size="17" aria-hidden="true" />
+                </button>
                 <div class="dashboard-quick-grid">
-                  <article v-for="item in dashboardMetrics" :key="item.label" class="dashboard-metric">
+                  <button
+                    v-for="item in dashboardMetrics"
+                    :key="item.label"
+                    class="dashboard-metric dashboard-link-card"
+                    type="button"
+                    :aria-label="`查看${item.label}详情`"
+                    @click="selectTab(item.target)"
+                  >
                     <component :is="item.icon" :size="17" aria-hidden="true" />
                     <span>{{ item.label }}</span>
                     <strong>{{ item.value }}</strong>
                     <small>{{ item.detail }}</small>
-                  </article>
+                    <ChevronRight class="dashboard-card-link-icon" :size="16" aria-hidden="true" />
+                  </button>
                 </div>
               </div>
 
@@ -171,15 +186,25 @@
                     <span class="dashboard-chart-caption">{{ formatStatNumber(dashboardStats?.api_calls ?? 0) }} API</span>
                   </div>
                   <div class="dashboard-bar-list">
-                    <article v-for="item in dashboardOperationBars" :key="item.label" class="dashboard-bar-item">
+                    <button
+                      v-for="item in dashboardOperationBars"
+                      :key="item.label"
+                      class="dashboard-bar-item"
+                      type="button"
+                      :aria-label="`查看${item.label}详情`"
+                      @click="selectTab(item.target)"
+                    >
                       <div>
                         <span>{{ item.label }}</span>
-                        <strong>{{ item.value }}</strong>
+                        <span class="dashboard-bar-value">
+                          <strong>{{ item.value }}</strong>
+                          <ChevronRight :size="14" aria-hidden="true" />
+                        </span>
                       </div>
                       <div class="dashboard-bar-track">
                         <span :style="{ width: `${item.percent}%` }"></span>
                       </div>
-                    </article>
+                    </button>
                   </div>
                 </section>
 
@@ -4149,7 +4174,7 @@ const dashboardReplyRate = computed(() => {
   if (!stats || stats.received_messages <= 0) return 0;
   return Math.min(100, Math.round((stats.replied_messages / stats.received_messages) * 100));
 });
-const dashboardOperationBars = computed<Array<{ label: string; value: string; percent: number }>>(() => {
+const dashboardOperationBars = computed<Array<{ label: string; value: string; percent: number; target: TabID }>>(() => {
   const stats = dashboardStats.value;
   const measures = stats?.operation_breakdown?.length
     ? stats.operation_breakdown
@@ -4163,7 +4188,8 @@ const dashboardOperationBars = computed<Array<{ label: string; value: string; pe
   return measures.map((item) => ({
     label: item.label,
     value: formatStatNumber(item.value),
-    percent: item.value > 0 ? Math.max(2, Math.round((item.value / maxValue) * 100)) : 0
+    percent: item.value > 0 ? Math.max(2, Math.round((item.value / maxValue) * 100)) : 0,
+    target: dashboardTargetForMetric(item.label)
   }));
 });
 const dashboardHourlyMax = computed(() => {
@@ -4178,42 +4204,48 @@ const dashboardHourlyBars = computed(() =>
     toolPercent: item.searches + item.images > 0 ? Math.max(3, Math.round(((item.searches + item.images) / dashboardHourlyMax.value) * 100)) : 0
   }))
 );
-const dashboardMetrics = computed<Array<{ label: string; value: string; detail: string; icon: IconComponent }>>(() => [
+const dashboardMetrics = computed<Array<{ label: string; value: string; detail: string; icon: IconComponent; target: TabID }>>(() => [
   {
     label: "今日消息",
     value: formatStatNumber(dashboardStats.value?.received_messages ?? 0),
     detail: dashboardStats.value?.since ? `从 ${formatDashboardTime(dashboardStats.value.since)} 起` : "收到的群聊和私聊消息",
-    icon: MessageCircle
+    icon: MessageCircle,
+    target: "logs"
   },
   {
     label: "今日回复",
     value: formatStatNumber(dashboardStats.value?.replied_messages ?? 0),
     detail: `回复率 ${dashboardReplyRate.value}%`,
-    icon: Send
+    icon: Send,
+    target: "logs"
   },
   {
     label: "生图/修图",
     value: formatStatNumber((dashboardStats.value?.image_generations ?? 0) + (dashboardStats.value?.image_edits ?? 0)),
     detail: `${formatStatNumber(dashboardStats.value?.image_generations ?? 0)} 次生图 / ${formatStatNumber(dashboardStats.value?.image_edits ?? 0)} 次修图`,
-    icon: Image
+    icon: Image,
+    target: "plugins"
   },
   {
     label: "联网搜索",
     value: formatStatNumber(dashboardStats.value?.search_calls ?? 0),
     detail: `${enabledWebSearchCount.value}/${webSearchConfig.providers.length} 个搜索源可用`,
-    icon: Search
+    icon: Search,
+    target: "web-search"
   },
   {
     label: "API 调用",
     value: formatStatNumber(dashboardStats.value?.api_calls ?? 0),
     detail: `${formatStatNumber(dashboardStats.value?.llm_calls ?? 0)} 次 LLM 调用`,
-    icon: Activity
+    icon: Activity,
+    target: "logs"
   },
   {
     label: "Token 消耗",
     value: formatCompactNumber(dashboardStats.value?.llm_total_tokens ?? 0),
     detail: `输入 ${formatCompactNumber(dashboardStats.value?.llm_input_tokens ?? 0)} / 输出 ${formatCompactNumber(dashboardStats.value?.llm_output_tokens ?? 0)}`,
-    icon: Zap
+    icon: Zap,
+    target: "llm"
   }
 ]);
 const dashboardHealthItems = computed<Array<{ label: string; value: string; detail: string; tone: string; icon: IconComponent }>>(() => [
@@ -4681,6 +4713,19 @@ function tabFromPathname(pathname: string): TabID | null {
 
 function tabRoute(tab: TabID): string {
   return tabRoutes[tab] || tabRoutes.llm;
+}
+
+function dashboardTargetForMetric(label: string): TabID {
+  if (label.includes("生图") || label.includes("修图") || label.includes("插件")) {
+    return "plugins";
+  }
+  if (label.includes("搜索")) {
+    return "web-search";
+  }
+  if (label.includes("Token")) {
+    return "llm";
+  }
+  return "logs";
 }
 
 function activateTab(tab: TabID): boolean {
