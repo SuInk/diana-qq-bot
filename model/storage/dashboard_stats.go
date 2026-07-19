@@ -14,6 +14,7 @@ type DashboardStats struct {
 	Since              time.Time               `json:"since"`
 	Until              time.Time               `json:"until"`
 	ReceivedMessages   int64                   `json:"received_messages"`
+	ActiveMembers      int64                   `json:"active_members"`
 	RepliedMessages    int64                   `json:"replied_messages"`
 	TextReplies        int64                   `json:"text_replies"`
 	ImageGenerations   int64                   `json:"image_generations"`
@@ -94,6 +95,14 @@ WHERE kind IN ('group', 'private')
   AND event_time >= ? AND event_time < ?
 `, sinceUnix, untilUnix).Scan(&stats.ReceivedMessages); err != nil {
 		return DashboardStats{}, fmt.Errorf("count dashboard messages: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(DISTINCT NULLIF(TRIM(user_id), ''))
+FROM message_events
+WHERE kind IN ('group', 'private')
+  AND event_time >= ? AND event_time < ?
+`, sinceUnix, untilUnix).Scan(&stats.ActiveMembers); err != nil {
+		return DashboardStats{}, fmt.Errorf("count dashboard active members: %w", err)
 	}
 	if err := s.db.QueryRowContext(ctx, `
 SELECT COUNT(*)

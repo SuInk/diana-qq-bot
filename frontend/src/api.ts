@@ -198,6 +198,7 @@ export interface QQBotDashboardStats {
   since?: string;
   until?: string;
   received_messages: number;
+  active_members: number;
   replied_messages: number;
   text_replies: number;
   image_generations: number;

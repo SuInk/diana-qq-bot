@@ -999,6 +999,23 @@ h2 {
   font-weight: 780;
 }
 
+.workspace-page-title {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.workspace-page-title strong {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.workspace-page-title span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .dashboard-actions,
 .dashboard-section-head {
   display: flex;
@@ -1017,7 +1034,8 @@ h2 {
 
 .dashboard-main-status {
   width: 100%;
-  min-height: 142px;
+  min-height: 242px;
+  height: 100%;
   padding: 18px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1122,7 +1140,7 @@ h2 {
 
 .dashboard-quick-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1258,6 +1276,42 @@ h2 {
 .dashboard-bar-list {
   display: grid;
   gap: 11px;
+}
+
+.dashboard-function-chart {
+  min-height: 150px;
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 7px;
+}
+
+.dashboard-function-chart::after {
+  content: "";
+  position: absolute;
+  inset: 4px 0 20px;
+  border-left: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0,
+    transparent calc(25% - 1px),
+    color-mix(in srgb, var(--line), transparent 18%) 25%
+  );
+  pointer-events: none;
+}
+
+.dashboard-chart-axis {
+  padding-left: 1px;
+  color: var(--muted);
+  font-size: 9px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.dashboard-function-chart .dashboard-bar-list {
+  position: relative;
+  z-index: 1;
+  align-content: center;
 }
 
 .dashboard-bar-item {
@@ -5287,6 +5341,10 @@ textarea:focus {
 
   .dashboard-quick-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-main-status {
+    min-height: 160px;
   }
 
   .dashboard-server-layout,

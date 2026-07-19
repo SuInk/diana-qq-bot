@@ -76,6 +76,10 @@
               <button class="icon-button workspace-menu" type="button" aria-label="切换导航" title="切换导航" @click="sidebarOpen = !sidebarOpen">
                 <PanelLeftOpen :size="18" aria-hidden="true" />
               </button>
+              <div v-if="activeTab === 'dashboard'" class="workspace-page-title">
+                <strong>仪表盘</strong>
+                <span>欢迎回来，Diana</span>
+              </div>
             </div>
           </div>
           <div class="workspace-head-actions">
@@ -112,8 +116,7 @@
             <section class="dashboard-surface" aria-labelledby="dashboard-title">
               <div class="dashboard-head">
                 <div>
-                  <p class="eyebrow">Overview</p>
-                  <h2 id="dashboard-title">运行仪表盘</h2>
+                  <h2 id="dashboard-title">概览</h2>
                 </div>
                 <div class="dashboard-actions">
                   <button class="button" type="button" :disabled="loadingLogs" @click="refreshDashboard">
@@ -185,26 +188,33 @@
                     <h3>今日功能统计</h3>
                     <span class="dashboard-chart-caption">{{ formatStatNumber(dashboardStats?.api_calls ?? 0) }} API</span>
                   </div>
-                  <div class="dashboard-bar-list">
-                    <button
-                      v-for="item in dashboardOperationBars"
-                      :key="item.label"
-                      class="dashboard-bar-item"
-                      type="button"
-                      :aria-label="`查看${item.label}详情`"
-                      @click="selectTab(item.target)"
-                    >
-                      <div>
-                        <span>{{ item.label }}</span>
-                        <span class="dashboard-bar-value">
-                          <strong>{{ item.value }}</strong>
-                          <ChevronRight :size="14" aria-hidden="true" />
-                        </span>
-                      </div>
-                      <div class="dashboard-bar-track">
-                        <span :style="{ width: `${item.percent}%` }"></span>
-                      </div>
-                    </button>
+                  <div class="dashboard-function-chart" role="img" aria-label="今日文本回复、生图修图、联网搜索和 LLM API 调用统计图">
+                    <div class="dashboard-bar-list">
+                      <button
+                        v-for="item in dashboardOperationBars"
+                        :key="item.label"
+                        class="dashboard-bar-item"
+                        type="button"
+                        :aria-label="`查看${item.label}详情`"
+                        @click="selectTab(item.target)"
+                      >
+                        <div>
+                          <span>{{ item.label }}</span>
+                          <span class="dashboard-bar-value">
+                            <strong>{{ item.value }}</strong>
+                            <ChevronRight :size="14" aria-hidden="true" />
+                          </span>
+                        </div>
+                        <div class="dashboard-bar-track">
+                          <span :style="{ width: `${item.percent}%` }"></span>
+                        </div>
+                      </button>
+                    </div>
+                    <div class="dashboard-chart-axis" aria-hidden="true">
+                      <span>0</span>
+                      <span>50%</span>
+                      <span>100%</span>
+                    </div>
                   </div>
                 </section>
 
@@ -4359,6 +4369,13 @@ const dashboardMetrics = computed<Array<{ label: string; value: string; detail: 
     detail: dashboardStats.value?.since ? `从 ${formatDashboardTime(dashboardStats.value.since)} 起` : "收到的群聊和私聊消息",
     icon: MessageCircle,
     target: "logs"
+  },
+  {
+    label: "今日成员",
+    value: formatStatNumber(dashboardStats.value?.active_members ?? 0),
+    detail: "按 QQ 号去重的今日发言成员",
+    icon: Users,
+    target: "group-admin"
   },
   {
     label: "今日回复",
