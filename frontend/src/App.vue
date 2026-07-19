@@ -3277,7 +3277,7 @@ const adminAccessSettings = reactive<AdminAccessSettings>({
   configured: false,
   username: "admin@diana.local",
   random_suffix_enabled: false,
-  login_path: "/",
+  login_path: "/login",
   managed_by_environment: false
 });
 const savingAdminAccess = ref(false);

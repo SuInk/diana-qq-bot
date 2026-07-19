@@ -49,7 +49,7 @@ type adminAccessSettingsPayload struct {
 	Regenerate          bool `json:"regenerate,omitempty"`
 }
 
-// AdminAccess keeps the root login path as the default and can atomically
+// AdminAccess keeps the fixed login path as the default and can atomically
 // switch to a persisted random suffix without restarting the server.
 type AdminAccess struct {
 	auth atomic.Pointer[AdminAuth]
@@ -87,7 +87,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 	settings := AdminAccessSettings{
 		Configured: access.token != "",
 		Username:   access.username,
-		LoginPath:  "/",
+		LoginPath:  defaultAdminLoginPath,
 	}
 
 	environmentPath := strings.TrimSpace(cfg.LoginPath)
@@ -98,7 +98,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 			return nil, err
 		}
 		settings.LoginPath = path
-		settings.RandomSuffixEnabled = path != "/"
+		settings.RandomSuffixEnabled = path != defaultAdminLoginPath
 		settings.ManagedByEnvironment = true
 	} else if persisted, ok, err := loadAdminAccessSettings(access.settingsPath); err != nil {
 		return nil, err
@@ -115,8 +115,8 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 			if err != nil {
 				return nil, fmt.Errorf("load admin access settings: %w", err)
 			}
-			if settings.LoginPath == "/" {
-				return nil, fmt.Errorf("load admin access settings: random suffix path cannot be root")
+			if settings.LoginPath == defaultAdminLoginPath {
+				return nil, fmt.Errorf("load admin access settings: random suffix path cannot be the default login path")
 			}
 		}
 	}
@@ -144,15 +144,10 @@ func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	bootstrapPath := path
-	if bootstrapPath == "/" {
-		bootstrapPath = "/direct-admin-entry"
-	}
-	auth, err := NewAdminAuth(AdminAuthConfig{Token: token, Username: username, LoginPath: bootstrapPath, SessionTTL: sessionTTL})
+	auth, err := NewAdminAuth(AdminAuthConfig{Token: token, Username: username, LoginPath: path, SessionTTL: sessionTTL})
 	if err != nil {
 		return nil, err
 	}
-	auth.loginPath = path
 	return auth, nil
 }
 
@@ -226,8 +221,8 @@ func persistAdminCredential(path string, credential persistedAdminCredential) er
 
 func normalizeAdminAccessPath(path, token string) (string, error) {
 	path = strings.TrimSpace(path)
-	if path == "" || path == "/" {
-		return "/", nil
+	if path == "" {
+		return defaultAdminLoginPath, nil
 	}
 	return normalizeAdminLoginPath(path, token)
 }
@@ -305,7 +300,7 @@ func (a *AdminAccess) Enabled() bool {
 func (a *AdminAccess) LoginPath() string {
 	auth := a.current()
 	if auth == nil {
-		return "/"
+		return defaultAdminLoginPath
 	}
 	return auth.LoginPath()
 }
@@ -360,10 +355,10 @@ func (a *AdminAccess) updateSettings(c *gin.Context) {
 		return
 	}
 
-	loginPath := "/"
+	loginPath := defaultAdminLoginPath
 	if payload.RandomSuffixEnabled {
 		loginPath = a.settings.LoginPath
-		if !a.settings.RandomSuffixEnabled || payload.Regenerate || loginPath == "/" {
+		if !a.settings.RandomSuffixEnabled || payload.Regenerate || loginPath == defaultAdminLoginPath {
 			var err error
 			loginPath, err = generateAdminAccessPath(a.token)
 			if err != nil {

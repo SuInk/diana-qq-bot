@@ -410,6 +410,7 @@ export interface AdminAuthStatus {
   configured: boolean;
   authenticated: boolean;
   login_page: boolean;
+  login_path: string;
   username?: string;
 }
 
@@ -435,7 +436,7 @@ async function requestJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const data = (await response.json().catch(() => ({}))) as T & { error?: string };
   if (!response.ok) {
     if (response.status === 401 && !url.startsWith("/api/auth/")) {
-      window.location.replace(rememberedAdminLoginPath() || "/");
+      window.location.replace(rememberedAdminLoginPath() || "/login");
     }
     throw new Error(data.error || `HTTP ${response.status}`);
   }

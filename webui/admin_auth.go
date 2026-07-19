@@ -16,6 +16,7 @@ import (
 const (
 	adminSessionCookieName = "diana_admin_session"
 	defaultAdminUsername   = "admin@diana.local"
+	defaultAdminLoginPath  = "/login"
 	defaultAdminSessionTTL = 12 * time.Hour
 	adminLoginWindow       = 5 * time.Minute
 	adminLoginBlock        = 15 * time.Minute
@@ -90,11 +91,10 @@ func NewAdminAuth(cfg AdminAuthConfig) (*AdminAuth, error) {
 func normalizeAdminLoginPath(raw string, token string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		if token == "" {
-			return "/login", nil
-		}
-		digest := sha256.Sum256([]byte(token))
-		raw = fmt.Sprintf("/access-%x", digest[:12])
+		return defaultAdminLoginPath, nil
+	}
+	if raw == defaultAdminLoginPath {
+		return raw, nil
 	}
 	if !adminLoginPathPattern.MatchString(raw) {
 		return "", fmt.Errorf("DIANA_ADMIN_LOGIN_PATH must be one path segment with at least 11 letters, digits, underscores, or hyphens")
@@ -113,7 +113,7 @@ func (a *AdminAuth) Enabled() bool {
 // LoginPath returns the configured hidden entry path for startup logging.
 func (a *AdminAuth) LoginPath() string {
 	if a == nil {
-		return "/login"
+		return defaultAdminLoginPath
 	}
 	return a.loginPath
 }
@@ -183,6 +183,7 @@ func (a *AdminAuth) status(c *gin.Context) {
 		"configured":    a.Enabled(),
 		"authenticated": authenticated,
 		"login_page":    secureEqual(candidatePath, a.loginPath),
+		"login_path":    a.loginPath,
 		"username":      a.username,
 	})
 }

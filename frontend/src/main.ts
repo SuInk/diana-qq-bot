@@ -3,7 +3,7 @@ import { ElButton, ElDrawer, ElInput, ElOption, ElSelect, ElSwitch, ElTabPane, E
 import App from "./App.vue";
 import AdminLogin from "./AdminLogin.vue";
 import LandingPage from "./LandingPage.vue";
-import { getAdminAuthStatus, rememberedAdminLoginPath } from "./api";
+import { getAdminAuthStatus } from "./api";
 import "element-plus/es/components/button/style/css";
 import "element-plus/es/components/drawer/style/css";
 import "element-plus/es/components/input/style/css";
@@ -16,6 +16,7 @@ import "./styles.css";
 
 const consolePaths = new Set(["/console", "/admin", "/webui", "/llm", "/test", "/qqbot", "/robots", "/groups", "/plugins", "/web-search", "/logs", "/security", "/theme"]);
 const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+const defaultLoginPath = "/login";
 
 function mount(component: Component): void {
   const app = createApp(component);
@@ -33,16 +34,12 @@ async function bootstrap(): Promise<void> {
       return;
     }
     if (currentPath === "/") {
-      if (auth.configured && !auth.authenticated) {
-        mount(LandingPage);
-        return;
-      }
-      mount(App);
+      mount(LandingPage);
       return;
     }
     if (consolePaths.has(currentPath)) {
       if (auth.configured && !auth.authenticated) {
-        window.location.replace(rememberedAdminLoginPath() || "/");
+        window.location.replace(auth.login_path || defaultLoginPath);
         return;
       }
       mount(App);

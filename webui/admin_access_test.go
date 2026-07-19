@@ -16,31 +16,32 @@ import (
 
 const adminAccessTestToken = "0123456789abcdef0123456789abcdef-access-token"
 
-func TestAdminAccessDefaultsToRootAndPersistsRandomSuffix(t *testing.T) {
+func TestAdminAccessDefaultsToLoginAndPersistsRandomSuffix(t *testing.T) {
 	t.Parallel()
 	settingsPath := filepath.Join(t.TempDir(), "admin-auth.json")
 	access, err := NewAdminAccess(AdminAccessConfig{Token: adminAccessTestToken, SettingsPath: settingsPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access.LoginPath() != "/" {
+	if access.LoginPath() != defaultAdminLoginPath {
 		t.Fatalf("default login path = %q", access.LoginPath())
 	}
 
 	router := newAdminAccessTestRouter(t, access)
-	status := performAdminAccessRequest(router, http.MethodGet, "/api/auth/status?path=/", nil, nil)
+	status := performAdminAccessRequest(router, http.MethodGet, "/api/auth/status?path="+defaultAdminLoginPath, nil, nil)
 	var authStatus map[string]any
 	decodeAdminAccessResponse(t, status, &authStatus)
 	if status.Code != http.StatusOK || authStatus["login_page"] != true {
-		t.Fatalf("root status = %d %#v", status.Code, authStatus)
+		t.Fatalf("login status = %d %#v", status.Code, authStatus)
 	}
+	assertAdminAccessStatus(t, router, "/api/auth/status?path=/", false)
 
 	login := performAdminAccessRequest(router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"token":"`+adminAccessTestToken+`"}`), map[string]string{
 		"Content-Type":       "application/json",
-		"X-Diana-Login-Path": "/",
+		"X-Diana-Login-Path": defaultAdminLoginPath,
 	})
 	if login.Code != http.StatusOK || len(login.Result().Cookies()) == 0 {
-		t.Fatalf("root login = %d %s", login.Code, login.Body.String())
+		t.Fatalf("default login = %d %s", login.Code, login.Body.String())
 	}
 	cookie := login.Result().Cookies()[0]
 
@@ -55,7 +56,7 @@ func TestAdminAccessDefaultsToRootAndPersistsRandomSuffix(t *testing.T) {
 	}
 	firstPath := settings.LoginPath
 
-	assertAdminAccessStatus(t, router, "/api/auth/status?path=/", false)
+	assertAdminAccessStatus(t, router, "/api/auth/status?path="+defaultAdminLoginPath, false)
 	assertAdminAccessStatus(t, router, "/api/auth/status?path="+firstPath, true)
 	security := performAdminAccessRequest(router, http.MethodGet, "/security", nil, nil)
 	if security.Code != http.StatusFound || security.Header().Get("Location") != firstPath {
@@ -88,7 +89,7 @@ func TestAdminAccessDefaultsToRootAndPersistsRandomSuffix(t *testing.T) {
 		"Cookie":       cookie.String(),
 	})
 	decodeAdminAccessResponse(t, disabled, &settings)
-	if disabled.Code != http.StatusOK || settings.RandomSuffixEnabled || settings.LoginPath != "/" {
+	if disabled.Code != http.StatusOK || settings.RandomSuffixEnabled || settings.LoginPath != defaultAdminLoginPath {
 		t.Fatalf("disabled settings = %d %#v", disabled.Code, settings)
 	}
 }
@@ -134,12 +135,12 @@ func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !access.Enabled() || access.LoginPath() != "/" || access.Username() != defaultAdminUsername {
+	if !access.Enabled() || access.LoginPath() != defaultAdminLoginPath || access.Username() != defaultAdminUsername {
 		t.Fatalf("enabled=%v path=%q", access.Enabled(), access.LoginPath())
 	}
 	router := newAdminAccessTestRouter(t, access)
 	response := performAdminAccessRequest(router, http.MethodGet, "/console", nil, nil)
-	if response.Code != http.StatusFound || response.Header().Get("Location") != "/" {
+	if response.Code != http.StatusFound || response.Header().Get("Location") != defaultAdminLoginPath {
 		t.Fatalf("console redirect = %d location %q", response.Code, response.Header().Get("Location"))
 	}
 	body, err := os.ReadFile(credentialsPath)
@@ -152,7 +153,7 @@ func TestAdminAccessWithoutTokenGeneratesLocalCredentials(t *testing.T) {
 	}
 	login := performAdminAccessRequest(router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"username":"`+credential.Username+`","password":"`+credential.Password+`"}`), map[string]string{
 		"Content-Type":       "application/json",
-		"X-Diana-Login-Path": "/",
+		"X-Diana-Login-Path": defaultAdminLoginPath,
 	})
 	if login.Code != http.StatusOK || len(login.Result().Cookies()) == 0 {
 		t.Fatalf("generated credential login = %d %s", login.Code, login.Body.String())

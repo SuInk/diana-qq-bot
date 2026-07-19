@@ -32,8 +32,8 @@ func TestNewAdminAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !configured.Enabled() || !strings.HasPrefix(configured.LoginPath(), "/access-") {
-		t.Fatalf("unexpected derived login path %q", configured.LoginPath())
+	if !configured.Enabled() || configured.LoginPath() != defaultAdminLoginPath {
+		t.Fatalf("unexpected default login path %q", configured.LoginPath())
 	}
 	if _, err := NewAdminAuth(AdminAuthConfig{Token: testAdminToken, LoginPath: "/api/private-entry"}); err == nil {
 		t.Fatal("expected reserved login path to be rejected")
@@ -70,8 +70,8 @@ func TestAdminAuthLoginSessionAndLogout(t *testing.T) {
 	auth, router := newAdminAuthTestRouter(t, time.Hour)
 
 	status := performRequest(router, http.MethodGet, "/api/auth/status?path=/ordinary-path", nil, nil)
-	if status.Code != http.StatusOK || strings.Contains(status.Body.String(), auth.LoginPath()) {
-		t.Fatalf("status leaked hidden path or failed: code=%d body=%s", status.Code, status.Body.String())
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), auth.LoginPath()) {
+		t.Fatalf("status did not return login path or failed: code=%d body=%s", status.Code, status.Body.String())
 	}
 	assertStatus(t, router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"token":"`+testAdminToken+`"}`), nil, http.StatusNotFound)
 
