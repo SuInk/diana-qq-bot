@@ -27,18 +27,21 @@ var adminLoginPathPattern = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9_-]{10,12
 
 // AdminAuthConfig configures the management-plane token gate.
 type AdminAuthConfig struct {
-	Token      string
-	Username   string
-	LoginPath  string
-	SessionTTL time.Duration
+	Token            string
+	Username         string
+	LoginPath        string
+	SessionTTL       time.Duration
+	SessionStorePath string
 }
 
 // AdminAuth protects the WebUI and management APIs without affecting OneBot traffic.
 type AdminAuth struct {
-	token      string
-	username   string
-	loginPath  string
-	sessionTTL time.Duration
+	token            string
+	username         string
+	loginPath        string
+	sessionTTL       time.Duration
+	sessionStorePath string
+	sessionKeyID     string
 
 	mu       sync.Mutex
 	sessions map[string]time.Time
@@ -77,14 +80,22 @@ func NewAdminAuth(cfg AdminAuthConfig) (*AdminAuth, error) {
 	if sessionTTL <= 0 {
 		sessionTTL = defaultAdminSessionTTL
 	}
+	sessionStorePath := strings.TrimSpace(cfg.SessionStorePath)
+	sessionKeyID := adminSessionKeyID(token)
+	sessions, err := loadAdminSessions(sessionStorePath, sessionKeyID, time.Now())
+	if err != nil {
+		return nil, err
+	}
 	return &AdminAuth{
-		token:      token,
-		username:   username,
-		loginPath:  loginPath,
-		sessionTTL: sessionTTL,
-		sessions:   map[string]time.Time{},
-		attempts:   map[string]adminLoginAttempt{},
-		now:        time.Now,
+		token:            token,
+		username:         username,
+		loginPath:        loginPath,
+		sessionTTL:       sessionTTL,
+		sessionStorePath: sessionStorePath,
+		sessionKeyID:     sessionKeyID,
+		sessions:         sessions,
+		attempts:         map[string]adminLoginAttempt{},
+		now:              time.Now,
 	}, nil
 }
 
@@ -225,10 +236,17 @@ func (a *AdminAuth) login(c *gin.Context) {
 		return
 	}
 	expiresAt := now.Add(a.sessionTTL)
+	sessionKey := adminSessionIDHash(sessionID)
 	a.mu.Lock()
 	a.cleanupLocked(now)
 	delete(a.attempts, clientKey)
-	a.sessions[sessionID] = expiresAt
+	a.sessions[sessionKey] = expiresAt
+	if err := a.persistSessionsLocked(); err != nil {
+		delete(a.sessions, sessionKey)
+		a.mu.Unlock()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "unable to persist admin session"})
+		return
+	}
 	a.mu.Unlock()
 	a.setSessionCookie(c, sessionID, expiresAt)
 	c.JSON(http.StatusOK, gin.H{"authenticated": true, "expires_at": expiresAt.UTC()})
@@ -243,9 +261,11 @@ func (a *AdminAuth) validLoginPayload(payload adminLoginPayload) bool {
 
 func (a *AdminAuth) logout(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
+	var persistErr error
 	if sessionID, err := c.Cookie(adminSessionCookieName); err == nil && sessionID != "" {
 		a.mu.Lock()
-		delete(a.sessions, sessionID)
+		delete(a.sessions, adminSessionIDHash(sessionID))
+		persistErr = a.persistSessionsLocked()
 		a.mu.Unlock()
 	}
 	c.SetSameSite(http.SameSiteStrictMode)
@@ -258,6 +278,10 @@ func (a *AdminAuth) logout(c *gin.Context) {
 		Secure:   c.Request.TLS != nil,
 		SameSite: http.SameSiteStrictMode,
 	})
+	if persistErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"authenticated": false, "error": "unable to persist admin logout"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"authenticated": false})
 }
 
@@ -272,12 +296,18 @@ func (a *AdminAuth) authenticated(c *gin.Context) bool {
 	now := a.now()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	expiresAt, ok := a.sessions[sessionID]
+	sessionKey := adminSessionIDHash(sessionID)
+	expiresAt, ok := a.sessions[sessionKey]
 	if !ok || !now.Before(expiresAt) {
-		delete(a.sessions, sessionID)
+		delete(a.sessions, sessionKey)
+		_ = a.persistSessionsLocked()
 		return false
 	}
 	return true
+}
+
+func (a *AdminAuth) persistSessionsLocked() error {
+	return persistAdminSessions(a.sessionStorePath, a.sessionKeyID, a.sessions)
 }
 
 func bearerToken(header string) (string, bool) {

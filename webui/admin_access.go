@@ -21,6 +21,7 @@ type AdminAccessConfig struct {
 	Username        string
 	LoginPath       string
 	SessionTTL      time.Duration
+	SessionsPath    string
 	SettingsPath    string
 	CredentialsPath string
 }
@@ -58,6 +59,7 @@ type AdminAccess struct {
 	token           string
 	username        string
 	sessionTTL      time.Duration
+	sessionsPath    string
 	settingsPath    string
 	credentialsPath string
 	settings        AdminAccessSettings
@@ -68,8 +70,18 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 		token:           strings.TrimSpace(cfg.Token),
 		username:        strings.TrimSpace(cfg.Username),
 		sessionTTL:      cfg.SessionTTL,
+		sessionsPath:    strings.TrimSpace(cfg.SessionsPath),
 		settingsPath:    strings.TrimSpace(cfg.SettingsPath),
 		credentialsPath: strings.TrimSpace(cfg.CredentialsPath),
+	}
+	if access.sessionsPath == "" {
+		sourcePath := access.credentialsPath
+		if sourcePath == "" {
+			sourcePath = access.settingsPath
+		}
+		if sourcePath != "" {
+			access.sessionsPath = filepath.Join(filepath.Dir(sourcePath), "admin-sessions.json")
+		}
 	}
 	if access.username == "" {
 		access.username = defaultAdminUsername
@@ -121,7 +133,7 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 		}
 	}
 
-	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL)
+	auth, err := newAdminAuthAtPath(access.token, access.username, settings.LoginPath, access.sessionTTL, access.sessionsPath)
 	if err != nil {
 		return nil, err
 	}
@@ -139,12 +151,18 @@ func NewAdminAccess(cfg AdminAccessConfig) (*AdminAccess, error) {
 	return access, nil
 }
 
-func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration) (*AdminAuth, error) {
+func newAdminAuthAtPath(token, username, path string, sessionTTL time.Duration, sessionsPath string) (*AdminAuth, error) {
 	path, err := normalizeAdminAccessPath(path, token)
 	if err != nil {
 		return nil, err
 	}
-	auth, err := NewAdminAuth(AdminAuthConfig{Token: token, Username: username, LoginPath: path, SessionTTL: sessionTTL})
+	auth, err := NewAdminAuth(AdminAuthConfig{
+		Token:            token,
+		Username:         username,
+		LoginPath:        path,
+		SessionTTL:       sessionTTL,
+		SessionStorePath: sessionsPath,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +385,7 @@ func (a *AdminAccess) updateSettings(c *gin.Context) {
 			}
 		}
 	}
-	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL)
+	nextAuth, err := newAdminAuthAtPath(a.token, a.username, loginPath, a.sessionTTL, a.sessionsPath)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

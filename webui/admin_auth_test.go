@@ -5,6 +5,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -133,10 +135,51 @@ func TestAdminAuthSessionExpiryAndRateLimit(t *testing.T) {
 	}, http.StatusTooManyRequests)
 }
 
+func TestAdminAuthSessionSurvivesRestartAndLogoutPersists(t *testing.T) {
+	t.Parallel()
+
+	storePath := filepath.Join(t.TempDir(), "admin-sessions.json")
+	_, router := newAdminAuthTestRouterWithStore(t, time.Hour, storePath)
+	login := performRequest(router, http.MethodPost, "/api/auth/login", strings.NewReader(`{"token":"`+testAdminToken+`"}`), map[string]string{
+		"Content-Type":       "application/json",
+		"X-Diana-Login-Path": "/secret-admin-entry",
+	})
+	if login.Code != http.StatusOK {
+		t.Fatalf("login failed: code=%d body=%s", login.Code, login.Body.String())
+	}
+	sessionCookie := login.Result().Cookies()[0]
+	info, err := os.Stat(storePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("session store mode = %o, want 600", info.Mode().Perm())
+	}
+
+	_, restartedRouter := newAdminAuthTestRouterWithStore(t, time.Hour, storePath)
+	assertStatus(t, restartedRouter, http.MethodGet, "/api/private", nil, map[string]string{"Cookie": sessionCookie.String()}, http.StatusOK)
+	logout := performRequest(restartedRouter, http.MethodPost, "/api/auth/logout", nil, map[string]string{"Cookie": sessionCookie.String()})
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout failed after restart: code=%d body=%s", logout.Code, logout.Body.String())
+	}
+
+	_, restartedAfterLogout := newAdminAuthTestRouterWithStore(t, time.Hour, storePath)
+	assertStatus(t, restartedAfterLogout, http.MethodGet, "/api/private", nil, map[string]string{"Cookie": sessionCookie.String()}, http.StatusUnauthorized)
+}
+
 func newAdminAuthTestRouter(t *testing.T, sessionTTL time.Duration) (*AdminAuth, *gin.Engine) {
+	return newAdminAuthTestRouterWithStore(t, sessionTTL, "")
+}
+
+func newAdminAuthTestRouterWithStore(t *testing.T, sessionTTL time.Duration, storePath string) (*AdminAuth, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	auth, err := NewAdminAuth(AdminAuthConfig{Token: testAdminToken, LoginPath: "/secret-admin-entry", SessionTTL: sessionTTL})
+	auth, err := NewAdminAuth(AdminAuthConfig{
+		Token:            testAdminToken,
+		LoginPath:        "/secret-admin-entry",
+		SessionTTL:       sessionTTL,
+		SessionStorePath: storePath,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

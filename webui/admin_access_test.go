@@ -74,6 +74,11 @@ func TestAdminAccessDefaultsToLoginAndPersistsRandomSuffix(t *testing.T) {
 	if reloaded.LoginPath() != firstPath {
 		t.Fatalf("persisted login path = %q, want %q", reloaded.LoginPath(), firstPath)
 	}
+	reloadedRouter := newAdminAccessTestRouter(t, reloaded)
+	reloadedConsole := performAdminAccessRequest(reloadedRouter, http.MethodGet, "/console", nil, map[string]string{"Cookie": cookie.String()})
+	if reloadedConsole.Code != http.StatusOK {
+		t.Fatalf("session did not survive admin access restart: status=%d", reloadedConsole.Code)
+	}
 
 	regenerated := performAdminAccessRequest(router, http.MethodPut, "/api/auth/settings", strings.NewReader(`{"random_suffix_enabled":true,"regenerate":true}`), map[string]string{
 		"Content-Type": "application/json",
