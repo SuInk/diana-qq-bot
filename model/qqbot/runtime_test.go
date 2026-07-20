@@ -934,13 +934,19 @@ func TestRuntimeSystemPromptIncludesTrustedRuntimeClock(t *testing.T) {
 	}
 }
 
-func TestRuntimeSystemPromptEnforcesQQGroupPoliticalRule(t *testing.T) {
+func TestRuntimeSystemPromptOmitsDeprecatedPoliticalRule(t *testing.T) {
 	runtime := NewRuntime(BotConfig{}, nilChannel{}, NewPluginManager(), nil, nil, nil, nil)
 	prompt := runtime.systemPrompt(MessageEvent{Kind: EventKindGroup}, nil)
-	for _, want := range []string{"遵守 QQ 群规则", "禁止回复、展开、评价、搜索或协助生成任何政治相关内容", "简短说明群规不方便聊政治"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("system prompt missing %q: %q", want, prompt)
+	for _, removed := range []string{"禁止回复、展开、评价、搜索或协助生成任何政治相关内容", "简短说明群规不方便聊政治"} {
+		if strings.Contains(prompt, removed) {
+			t.Fatalf("system prompt still contains deprecated political rule %q: %q", removed, prompt)
 		}
+	}
+
+	legacy := BotConfig{SystemPrompt: "前置人格。" + deprecatedPoliticalPromptRule + "后置人格。"}
+	migrated := legacy.WithDefaults().SystemPrompt
+	if migrated != "前置人格。后置人格。" {
+		t.Fatalf("legacy political rule migration = %q", migrated)
 	}
 }
 
