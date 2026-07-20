@@ -150,8 +150,10 @@ func TestRuntimeDoesNotReplyBeyondInboundReplayWindow(t *testing.T) {
 	}
 }
 
-func TestReplyToBotRemainsAnUnconditionalTrigger(t *testing.T) {
-	runtime := NewRuntime(BotConfig{BotQQ: "42"}, nilChannel{}, NewPluginManager(), nil, nil, nil, nil)
+func TestReplyToBotEntersSemanticAnswerabilityGate(t *testing.T) {
+	runtime := NewRuntime(BotConfig{BotQQ: "42"}, nilChannel{}, NewPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
+		return &capturingLLMProvider{}, nil
+	})
 	event := MessageEvent{
 		Kind:      EventKindGroup,
 		GroupID:   "123",
@@ -161,8 +163,14 @@ func TestReplyToBotRemainsAnUnconditionalTrigger(t *testing.T) {
 		Segments:  []MessageSegment{{Type: "text", Data: map[string]string{"text": "再说一下"}}},
 	}
 	event = runtime.enrichReplyReference(context.Background(), event)
-	if !event.ToMe || !runtime.shouldHandleChat(event, "再说一下") {
-		t.Fatal("replying to the bot must bypass the passive router")
+	if !event.ToMe {
+		t.Fatal("replying to the bot should remain addressed to the bot")
+	}
+	if runtime.shouldHandleChat(event, "再说一下") {
+		t.Fatal("replying to the bot must not bypass semantic answerability routing")
+	}
+	if !runtime.shouldConsiderPassiveReply(event, "再说一下") {
+		t.Fatal("replying to the bot should enter semantic answerability routing")
 	}
 }
 

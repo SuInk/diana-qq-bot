@@ -599,7 +599,9 @@ func TestReplySuppressionPersistsAcrossRuntimeRestart(t *testing.T) {
 func TestBotReplyLoopSuppressesThirdAIClassifiedMessageAcrossLowFrequency(t *testing.T) {
 	provider := &sequenceLLMProvider{replies: []string{
 		`{"automated_ai_reply":true,"confidence":0.97,"reason":"模板化助手自动回应"}`,
+		`{"should_reply":false,"confidence":0.99,"category":"none","directed_at_bot":true,"answerable":false,"reason":"只是待命式自动回应，没有需要可靠回答的问题"}`,
 		`{"automated_ai_reply":true,"confidence":0.96,"reason":"延续相同助手人格"}`,
+		`{"should_reply":false,"confidence":0.99,"category":"none","directed_at_bot":true,"answerable":false,"reason":"只是确认不会循环，不需要继续回复"}`,
 		`{"automated_ai_reply":true,"confidence":0.98,"reason":"继续自动回应机器人"}`,
 		`为避免机器人互相循环，已暂停响应此账号约 30 分钟，期间不再接续消息。`,
 	}}
@@ -616,8 +618,8 @@ func TestBotReplyLoopSuppressesThirdAIClassifiedMessageAcrossLowFrequency(t *tes
 	for i, text := range texts {
 		handled, outcome := prepareBotReplyLoopRound(t, runtime, "ai-loop", "20002", i, start.Add(time.Duration(i)*10*time.Minute), 2*time.Minute, text)
 		if i < botReplyLoopThreshold-1 {
-			if !handled || outcome != "replied" {
-				t.Fatalf("round %d handled=%v outcome=%q, want replied", i+1, handled, outcome)
+			if handled || outcome != "ignored" {
+				t.Fatalf("round %d handled=%v outcome=%q, want semantic silence", i+1, handled, outcome)
 			}
 			continue
 		}
@@ -632,8 +634,9 @@ func TestBotReplyLoopSuppressesThirdAIClassifiedMessageAcrossLowFrequency(t *tes
 	if !strings.Contains(item.Reason, "累计 3 次高置信度自动 AI 回复") {
 		t.Fatalf("suppression reason = %q", item.Reason)
 	}
-	if len(provider.requests) != botReplyLoopThreshold+1 {
-		t.Fatalf("LLM requests = %d, want %d classifiers plus one notice", len(provider.requests), botReplyLoopThreshold+1)
+	wantRequests := botReplyLoopThreshold + (botReplyLoopThreshold - 1) + 1
+	if len(provider.requests) != wantRequests {
+		t.Fatalf("LLM requests = %d, want %d classifiers, answerability routes, and one notice", len(provider.requests), wantRequests)
 	}
 	if len(channel.sent) != 1 {
 		t.Fatalf("suppression notices = %#v", channel.sent)
@@ -655,6 +658,7 @@ func TestBotReplyLoopDoesNotCountHumanClassifiedMessages(t *testing.T) {
 	provider := &sequenceLLMProvider{}
 	for i := 0; i < botReplyLoopThreshold+2; i++ {
 		provider.replies = append(provider.replies, `{"automated_ai_reply":false,"confidence":0.99,"reason":"普通真人连续聊天"}`)
+		provider.replies = append(provider.replies, `{"should_reply":true,"confidence":0.97,"category":"bot_related","directed_at_bot":true,"answerable":true,"reason":"真人在继续追问可回答的问题"}`)
 	}
 	runtime := NewRuntime(BotConfig{OwnerID: "10001", BotQQ: "42"}, nilChannel{}, NewPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
 		return provider, nil
@@ -669,8 +673,9 @@ func TestBotReplyLoopDoesNotCountHumanClassifiedMessages(t *testing.T) {
 	if _, active := runtime.activeReplySuppression(MessageEvent{Kind: EventKindGroup, GroupID: "123456", UserID: "20002"}, time.Now()); active {
 		t.Fatal("human-classified messages were incorrectly suppressed")
 	}
-	if len(provider.requests) != botReplyLoopThreshold+2 {
-		t.Fatalf("AI classifier requests = %d, want %d", len(provider.requests), botReplyLoopThreshold+2)
+	wantRequests := (botReplyLoopThreshold + 2) * 2
+	if len(provider.requests) != wantRequests {
+		t.Fatalf("classifier and route requests = %d, want %d", len(provider.requests), wantRequests)
 	}
 }
 
@@ -762,19 +767,27 @@ func TestReplySuppressionNoticeUsesMainModelWithoutMentions(t *testing.T) {
 }
 
 func TestBotReplyLoopNeverClassifiesOwner(t *testing.T) {
-	provider := &sequenceLLMProvider{replies: []string{`{"automated_ai_reply":true,"confidence":1,"reason":"should not be used"}`}}
+	provider := &sequenceLLMProvider{}
+	for i := 0; i < botReplyLoopThreshold+1; i++ {
+		provider.replies = append(provider.replies, `{"should_reply":false,"confidence":0.99,"category":"none","directed_at_bot":true,"answerable":false,"reason":"没有需要继续回答的内容"}`)
+	}
 	runtime := NewRuntime(BotConfig{OwnerID: "10001", BotQQ: "42"}, nilChannel{}, NewPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
 		return provider, nil
 	})
 	start := time.Now().Add(-time.Minute).Truncate(time.Second)
 	for i := 0; i < botReplyLoopThreshold+1; i++ {
 		handled, outcome := prepareBotReplyLoopRound(t, runtime, "owner", "10001", i, start.Add(time.Duration(i)*time.Minute), time.Minute, "主人正常回复")
-		if !handled || outcome != "replied" {
-			t.Fatalf("owner round %d handled=%v outcome=%q", i+1, handled, outcome)
+		if handled || outcome != "ignored" {
+			t.Fatalf("owner round %d handled=%v outcome=%q, want semantic silence", i+1, handled, outcome)
 		}
 	}
-	if len(provider.requests) != 0 {
-		t.Fatalf("owner unexpectedly entered AI classifier: requests=%d", len(provider.requests))
+	if len(provider.requests) != botReplyLoopThreshold+1 {
+		t.Fatalf("owner route requests=%d, want %d", len(provider.requests), botReplyLoopThreshold+1)
+	}
+	for _, request := range provider.requests {
+		if requestMessagesContain(request.Messages, "反机器人循环分类器") {
+			t.Fatal("owner unexpectedly entered AI classifier")
+		}
 	}
 }
 

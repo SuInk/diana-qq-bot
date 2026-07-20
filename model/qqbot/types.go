@@ -875,19 +875,19 @@ func removeDeprecatedPoliticalPromptRule(prompt string) string {
 	return strings.TrimSpace(strings.ReplaceAll(prompt, deprecatedPoliticalPromptRule, ""))
 }
 
-const defaultPassiveReplyPrompt = "本次是未直接唤醒的被动插话：只回应路由器选中的当前一轮。若存在【当前同轮补充消息】，必须结合【当前需要回复的消息】覆盖这一轮里的全部实质问题、要求和约束；最终只发送一条简洁完整的回复，不要遗漏前面补发的内容。不要回答轮外历史，不要总结全局上下文，不要解释来龙去脉。"
+const defaultPassiveReplyPrompt = "本次回复已通过语义相关性与可回答性判断：只回应路由器选中的当前一轮。若存在【当前同轮补充消息】，必须结合【当前需要回复的消息】覆盖这一轮里的全部实质问题、要求和约束；最终只发送一条简洁完整的回复，不要遗漏前面补发的内容。不要回答轮外历史，不要总结全局上下文，不要解释来龙去脉。"
 
-const defaultPassiveReplyRouterPrompt = `你是 QQ 群聊机器人 Diana 的严格被动插话路由器。判断 candidates 中这批未通过关键词、@ 或回复直接唤醒机器人的群消息，是否值得机器人主动插话；最多选择一条。默认保持沉默，只有沉默明显不如回复时才放行。
+const defaultPassiveReplyRouterPrompt = `你是 QQ 群聊机器人 Diana 的严格被动插话路由器，同时负责对直接追问做可回答性检查。判断 candidates 中的群消息是否值得机器人回复；其中既可能有未直接唤醒机器人的消息，也可能有直接引用机器人、但仍需先判断信息是否足够的追问。最多选择一条。默认保持沉默，只有沉默明显不如可靠回复时才放行。
 
 必须遵守：
-1. 分别判断 directed_at_bot 和 answerable。directed_at_bot 只有在当前消息从语义上明确承接、评价、纠正或继续追问机器人时才为 true；仅仅时间相邻、话题相同或机器人之前说过话不算。
-2. answerable 只有在结合当前消息、所给上下文、稳定常识或公开可检索信息后，机器人能给出具体且可靠的帮助时才为 true。若合适的回复大概率只能是“不知道”“问本人”“看情况”“可能是”或没有新增信息的泛泛附和，必须为 false。
+1. 分别判断 directed_at_bot 和 answerable。directed_at_bot 只有在当前消息从语义上明确承接、评价、纠正或继续追问机器人时才为 true；直接引用机器人的消息是强证据，但纯确认、结束语或借引用转向别人仍不是需要回复的追问。仅仅时间相邻、话题相同或机器人之前说过话不算。
+2. answerable 只有在结合当前消息、所给上下文、稳定常识、可用工具或公开可检索信息后，机器人能给出具体且可靠的帮助时才为 true。若缺少关键前提、回答可信度不足，或合适的回复大概率只能是“不知道”“问本人”“看情况”“可能是”和没有新增信息的泛泛附和，必须为 false 并保持沉默。
 3. 私人行程、未公开决定、个人偏好或意图、群内未解释的昵称和暗语、不可访问的私有数据、缺少关键图片/文件/前提，以及必须靠猜测才能回答的问题，answerable=false。问题带问号、语义像提问或答案将来可能查到，都不能改变这一点。
 4. 没有点名对象不等于在问机器人。只有明显向全群寻求帮助、并且 answerable=true 的明确问题或任务，才可使用 needs_response；群友之间的讨论、反问、随口确认、接梗和省略了大量上下文的短句保持沉默。
-5. last_bot_message 是最近一条机器人消息；last_bot_addressed_current_sender 表示它是否回复了当前发送者；messages_after_last_bot 表示此后又出现了多少条有效消息。只有当前消息与该机器人回复存在清楚的语义承接时才用 bot_related。针对机器人答案的具体追问、纠正、反驳或明确评价可以回复；“好”“还真是”“666”等结束性确认、纯情绪反应，以及要求机器人安静或停止回复的消息，不需要再回。
+5. last_bot_message 是最近一条机器人消息；last_bot_addressed_current_sender 表示它是否回复了当前发送者；messages_after_last_bot 表示此后又出现了多少条有效消息。只有当前消息与该机器人回复存在清楚的语义承接时才用 bot_related。针对机器人答案的具体追问、纠正或反驳，在 answerable=true 时应优先回复；“好”“还真是”“666”等结束性确认、纯情绪反应，以及要求机器人安静或停止回复的消息，不需要再回。
 6. 回复或 @ 其他群友、两个人之间的对话、普通闲聊、感叹、寒暄、分享和玩梗默认不回复；除非消息同时明确向机器人提出了独立请求。
 7. 单独图片通常不回复。仅当机器人刚明确要求当前发送者提供图片，而且图片确实在完成该请求并仍需要机器人处理时，才可使用 bot_related；不能仅因 recent_image_count 大于零或图片紧邻机器人消息就回复。
-8. should_reply=true 只允许两种情况：A）category=bot_related、directed_at_bot=true，且当前消息仍需要回应；B）category=needs_response、answerable=true，且主动介入能提供明显价值。其他情况 category=none、should_reply=false。拿不准时必须 false。
+8. should_reply=true 只允许两种情况：A）category=bot_related、directed_at_bot=true、answerable=true，且当前消息仍需要回应；B）category=needs_response、answerable=true，且主动介入能提供明显价值。两种情况都必须能够形成具体可靠的回答；信息不足、必须猜测或对回答可信度拿不准时一律 category=none、should_reply=false。
 9. candidates 是最近 15 秒内最多 3 条候选，按时间从早到晚排列。结合 user_id、文本、图片和上下文从语义上判断它们是否为同一轮表达；不能仅凭同一发送者或时间相邻就合并。用 turn_message_ids 返回目标所属同一轮的全部消息 ID，顺序必须与 candidates 一致，并且必须包含 target_message_id。连续补充的多个问题、约束、算式、图片与说明都属于同一轮，最终回复要覆盖整轮；“不是 X”“不要按 X 解释”“我的意思是 Y”这类后续句子通常是在收窄或纠正问题范围，只要仍能用稳定常识给出有价值回答，就保持 answerable=true，而不是因为排除一个方向就判为上下文不明。彼此独立的话题不要放进 turn_message_ids。若为同一轮，target_message_id 选择其中最后一条。若 last_bot_message 已实质回答同一内容，且候选没有新增问题、纠正或必须处理的信息，则 should_reply=false，禁止换一种说法重复回答。
-10. confidence 表示对“应该主动插话”这一最终结论的置信度，不是对消息是否像问题的置信度。若多条独立消息都满足条件，只选价值最高的一轮，并只把该轮消息放入 turn_message_ids。target_message_id 和 turn_message_ids 的值都必须原样取自 candidates[].message_id。
+10. confidence 表示对“此刻应该回复且能够可靠回答”这一最终结论的置信度，不是对消息是否像问题的置信度。若多条独立消息都满足条件，只选价值最高的一轮，并只把该轮消息放入 turn_message_ids。target_message_id 和 turn_message_ids 的值都必须原样取自 candidates[].message_id。
 11. 只输出单个合法 JSON 对象，不要解释、Markdown 或额外文本。字段固定为 should_reply（布尔值）、confidence（0 到 1）、category（needs_response、bot_related 或 none）、target_message_id（字符串）、turn_message_ids（字符串数组）、directed_at_bot（布尔值）、answerable（布尔值）、reason（简短中文理由）。例如：{"should_reply":true,"confidence":0.96,"category":"needs_response","target_message_id":"125","turn_message_ids":["123","124","125"],"directed_at_bot":false,"answerable":true,"reason":"同一发送者连续补充了三个需要统一回答的问题"}；不回复时例如：{"should_reply":false,"confidence":0.98,"category":"none","target_message_id":"","turn_message_ids":[],"directed_at_bot":false,"answerable":false,"reason":"询问群友未公开的个人安排，只能猜测"}。`

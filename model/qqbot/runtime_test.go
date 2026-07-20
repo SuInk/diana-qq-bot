@@ -95,22 +95,6 @@ func TestRuntimeDirectTriggersBypassPassiveRouter(t *testing.T) {
 			},
 			text: "帮我看看",
 		},
-		{
-			name: "reply to bot",
-			event: MessageEvent{
-				Kind:       EventKindGroup,
-				GroupID:    "123456",
-				UserID:     "10001",
-				MessageID:  "reply-1",
-				ToMe:       true,
-				RawMessage: "[CQ:reply,id=bot-message] 再解释一下",
-				Segments: []MessageSegment{
-					{Type: "reply", Data: map[string]string{"id": "bot-message"}},
-					{Type: "text", Data: map[string]string{"text": " 再解释一下"}},
-				},
-			},
-			text: "再解释一下",
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,6 +122,121 @@ func TestRuntimeDirectTriggersBypassPassiveRouter(t *testing.T) {
 				if len(request.Messages) > 0 && strings.Contains(request.Messages[0].Content, "严格被动插话路由器") {
 					t.Fatalf("direct trigger unexpectedly entered passive router: %#v", request.Messages)
 				}
+			}
+		})
+	}
+}
+
+func TestRuntimeReplyToBotUsesReliableAnswerabilityGate(t *testing.T) {
+	event := MessageEvent{
+		Kind:       EventKindGroup,
+		GroupID:    "123456",
+		UserID:     "10001",
+		MessageID:  "reply-1",
+		ToMe:       true,
+		RawMessage: "[CQ:reply,id=bot-message] 这个结论的依据是什么",
+		Segments: []MessageSegment{
+			{Type: "reply", Data: map[string]string{"id": "bot-message"}},
+			{Type: "text", Data: map[string]string{"text": " 这个结论的依据是什么"}},
+		},
+		Quoted: &QuotedMessage{
+			MessageID:  "bot-message",
+			UserID:     "42",
+			RawMessage: "这个结论来自公开文档。",
+			Segments:   []MessageSegment{{Type: "text", Data: map[string]string{"text": "这个结论来自公开文档。"}}},
+		},
+	}
+	provider := &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.96,"category":"bot_related","target_message_id":"reply-1","turn_message_ids":["reply-1"],"directed_at_bot":true,"answerable":true,"reason":"用户在追问机器人刚才结论的依据，现有上下文足够回答"}`}
+	runtime := NewRuntime(BotConfig{
+		BotQQ:                 "42",
+		PassiveReplyChance:    0.000001,
+		PassiveReplyThreshold: 0.9,
+	}, nilChannel{}, NewPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
+		return provider, nil
+	})
+	text := PlainText(event.Segments)
+	if runtime.shouldHandleChat(event, text) {
+		t.Fatal("replying to the bot must pass the semantic answerability gate")
+	}
+	if passiveReplySampleAllows(event, text, 0.000001) {
+		t.Fatal("test event unexpectedly passed ordinary passive sampling")
+	}
+	if !runtime.shouldConsiderPassiveReply(event, text) || !runtime.shouldHandlePassiveReply(context.Background(), event, text) {
+		t.Fatal("reliable direct follow-up should pass semantic routing without passive sampling")
+	}
+	if len(provider.request.Messages) == 0 || !strings.Contains(provider.request.Messages[0].Content, "回答可信度不足时必须 should_reply=false") {
+		t.Fatalf("router prompt missing runtime answerability guard: %#v", provider.request.Messages)
+	}
+}
+
+func TestRuntimePrepareDirectBotFollowupRoutesImmediately(t *testing.T) {
+	tests := []struct {
+		name        string
+		routeReply  string
+		wantHandled bool
+		wantOutcome string
+	}{
+		{
+			name:        "reliable follow-up",
+			routeReply:  `{"should_reply":true,"confidence":0.96,"category":"bot_related","target_message_id":"reply-1","turn_message_ids":["reply-1"],"directed_at_bot":true,"answerable":true,"reason":"上下文足够可靠回答"}`,
+			wantHandled: true,
+			wantOutcome: "replied",
+		},
+		{
+			name:        "missing information",
+			routeReply:  `{"should_reply":false,"confidence":0.98,"category":"none","target_message_id":"","turn_message_ids":[],"directed_at_bot":true,"answerable":false,"reason":"缺少所指文件，无法可靠回答"}`,
+			wantHandled: false,
+			wantOutcome: "ignored",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &sequenceLLMProvider{replies: []string{
+				`{"automated_ai_reply":false,"confidence":0.99,"reason":"普通真人追问"}`,
+				tt.routeReply,
+			}}
+			runtime := NewRuntime(BotConfig{
+				BotQQ:                 "42",
+				PassiveReplyChance:    0.000001,
+				PassiveReplyThreshold: 0.9,
+			}, nilChannel{}, NewPluginManager(), nil, nil, nil, func() (LLMProvider, error) {
+				return provider, nil
+			})
+			runtime.mu.Lock()
+			runtime.running = true
+			runtime.runCtx = context.Background()
+			runtime.mu.Unlock()
+			event := MessageEvent{
+				Kind:       EventKindGroup,
+				GroupID:    "123456",
+				UserID:     "10001",
+				SelfID:     "42",
+				MessageID:  "reply-1",
+				ToMe:       true,
+				RawMessage: "[CQ:reply,id=bot-message] 那这个结论的依据呢",
+				Segments: []MessageSegment{
+					{Type: "reply", Data: map[string]string{"id": "bot-message"}},
+					{Type: "text", Data: map[string]string{"text": " 那这个结论的依据呢"}},
+				},
+				Quoted: &QuotedMessage{
+					MessageID:  "bot-message",
+					UserID:     "42",
+					RawMessage: "这个结论来自公开文档。",
+					Segments:   []MessageSegment{{Type: "text", Data: map[string]string{"text": "这个结论来自公开文档。"}}},
+				},
+			}
+			_, _, handled, outcome := runtime.prepareMessageEvent(context.Background(), event)
+			if handled != tt.wantHandled || outcome != tt.wantOutcome {
+				t.Fatalf("handled=%v outcome=%q, want handled=%v outcome=%q", handled, outcome, tt.wantHandled, tt.wantOutcome)
+			}
+			if len(provider.requestsSnapshot()) != 2 {
+				t.Fatalf("LLM requests=%d, want loop classification plus answerability route", len(provider.requestsSnapshot()))
+			}
+			runtime.passiveBatchMu.Lock()
+			_, queued := runtime.passiveBatches[sessionKey(event)]
+			runtime.passiveBatchMu.Unlock()
+			if queued {
+				t.Fatal("direct bot follow-up was incorrectly queued in the passive batch")
 			}
 		})
 	}
@@ -1855,7 +1954,7 @@ func TestRuntimeRoutesGroupImageContextFollowupWithLLM(t *testing.T) {
 }
 
 func TestRuntimePassiveReplyRecordsSemanticDecision(t *testing.T) {
-	provider := &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.82,"category":"bot_related","directed_at_bot":true,"answerable":false}`}
+	provider := &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.82,"category":"bot_related","directed_at_bot":true,"answerable":true}`}
 	logs := &captureAppLogs{}
 	runtime := NewRuntime(BotConfig{
 		BotQQ:                 "42",
@@ -1880,7 +1979,7 @@ func TestRuntimePassiveReplyRecordsSemanticDecision(t *testing.T) {
 		t.Fatal("passive router did not call the LLM")
 	}
 	systemPrompt := provider.request.Messages[0].Content
-	for _, want := range []string{"默认保持沉默", "directed_at_bot", "answerable", "不等于在问机器人", "只能是“不知道”", "last_bot_addressed_current_sender", "要求机器人安静或停止回复", "主动介入能提供明显价值", "拿不准时必须 false"} {
+	for _, want := range []string{"默认保持沉默", "directed_at_bot", "answerable", "不等于在问机器人", "只能是“不知道”", "last_bot_addressed_current_sender", "要求机器人安静或停止回复", "主动介入能提供明显价值", "回答可信度不足"} {
 		if !strings.Contains(systemPrompt, want) {
 			t.Fatalf("passive router prompt missing %q", want)
 		}
@@ -1974,7 +2073,7 @@ func TestRuntimePassiveReplyPayloadIdentifiesCorrectionToRecentBotReply(t *testi
 }
 
 func TestRuntimePassiveReplyKeepsBotFollowupAcrossSameSenderImage(t *testing.T) {
-	provider := &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.97,"category":"bot_related","directed_at_bot":true,"answerable":false}`}
+	provider := &capturingLLMProvider{reply: `{"should_reply":true,"confidence":0.97,"category":"bot_related","directed_at_bot":true,"answerable":true}`}
 	runtime := NewRuntime(BotConfig{
 		BotQQ:                 "42",
 		PassiveReplyChance:    1,
@@ -2110,7 +2209,7 @@ func TestRuntimeRepliesWhenImageFulfillsRecentBotRequest(t *testing.T) {
 	channel := &recordingChannel{}
 	imageURL := "data:image/png;base64,aGVsbG8="
 	provider := &sequenceLLMProvider{replies: []string{
-		`{"should_reply":true,"confidence":0.97,"category":"bot_related","directed_at_bot":true,"answerable":false}`,
+		`{"should_reply":true,"confidence":0.97,"category":"bot_related","directed_at_bot":true,"answerable":true}`,
 		`{"action":"none"}`,
 		"看到了，截图里的 QQ 版本是 9.9.31。",
 	}}
@@ -2312,7 +2411,9 @@ func TestPassiveReplyDecisionRequiresStrictThresholdAndCategory(t *testing.T) {
 		want      bool
 	}{
 		{name: "clear request above threshold", raw: `{"should_reply":true,"confidence":0.96,"category":"needs_response","directed_at_bot":false,"answerable":true}`, threshold: 0.9, want: true},
-		{name: "bot related at threshold", raw: "```json\n{\"should_reply\":true,\"confidence\":0.9,\"category\":\"bot_related\",\"directed_at_bot\":true,\"answerable\":false}\n```", threshold: 0.9, want: true},
+		{name: "bot related at threshold", raw: "```json\n{\"should_reply\":true,\"confidence\":0.9,\"category\":\"bot_related\",\"directed_at_bot\":true,\"answerable\":true}\n```", threshold: 0.9, want: true},
+		{name: "unanswerable bot follow-up", raw: `{"should_reply":true,"confidence":0.99,"category":"bot_related","directed_at_bot":true,"answerable":false}`, threshold: 0.9, want: false},
+		{name: "low confidence bot follow-up", raw: `{"should_reply":true,"confidence":0.89,"category":"bot_related","directed_at_bot":true,"answerable":true}`, threshold: 0.9, want: false},
 		{name: "below threshold", raw: `{"should_reply":true,"confidence":0.89,"category":"needs_response","directed_at_bot":false,"answerable":true}`, threshold: 0.9, want: false},
 		{name: "unanswerable group question", raw: `{"should_reply":true,"confidence":0.99,"category":"needs_response","directed_at_bot":false,"answerable":false}`, threshold: 0.9, want: false},
 		{name: "unrelated bot category", raw: `{"should_reply":true,"confidence":0.99,"category":"bot_related","directed_at_bot":false,"answerable":true}`, threshold: 0.9, want: false},
@@ -2337,7 +2438,7 @@ func TestPassiveReplyDecisionRequiresStrictThresholdAndCategory(t *testing.T) {
 func TestRuntimePassiveReplyDoesNotRateLimitQualifiedMessages(t *testing.T) {
 	provider := &sequenceLLMProvider{replies: []string{
 		`{"should_reply":true,"confidence":0.99,"category":"needs_response","directed_at_bot":false,"answerable":true}`,
-		`{"should_reply":true,"confidence":0.99,"category":"bot_related","directed_at_bot":true,"answerable":false}`,
+		`{"should_reply":true,"confidence":0.99,"category":"bot_related","directed_at_bot":true,"answerable":true}`,
 	}}
 	runtime := NewRuntime(BotConfig{
 		BotQQ:                 "42",

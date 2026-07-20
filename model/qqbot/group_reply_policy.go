@@ -72,6 +72,22 @@ func eventDirectlyMentionsBot(event MessageEvent, cfg BotConfig) bool {
 	return false
 }
 
+func eventRepliesToBot(event MessageEvent, cfg BotConfig) bool {
+	if event.Kind != EventKindGroup || event.Quoted == nil {
+		return false
+	}
+	quotedUserID := strings.TrimSpace(event.Quoted.UserID)
+	if quotedUserID == "" {
+		return false
+	}
+	for _, botID := range []string{event.SelfID, cfg.BotQQ} {
+		if botID = strings.TrimSpace(botID); botID != "" && quotedUserID == botID {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Runtime) canConfigureGroup(ctx context.Context, event MessageEvent) (string, error) {
 	if event.Kind != EventKindGroup || strings.TrimSpace(event.GroupID) == "" || strings.TrimSpace(event.UserID) == "" {
 		return "", fmt.Errorf("群配置只能在 QQ 群聊中修改")

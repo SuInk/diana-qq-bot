@@ -902,6 +902,7 @@ func (r *Runtime) prepareMessageEvent(ctx context.Context, event MessageEvent) (
 	// Long-term extraction is durable and asynchronous. It never blocks reply
 	// routing and resolver/video-only messages do not enter the LLM memory gate.
 	r.enqueueEventMemory(event, memoryEventText(event))
+	directBotFollowup := eventRepliesToBot(event, r.effectiveConfigForEvent(event))
 	handled := r.shouldHandle(event, text)
 	passiveQueued := false
 	if handled {
@@ -910,9 +911,17 @@ func (r *Runtime) prepareMessageEvent(ctx context.Context, event MessageEvent) (
 		r.cancelPassiveReplyBatch(event)
 	}
 	if !handled && r.shouldConsiderPassiveReply(event, text) {
-		passiveQueued = r.enqueuePassiveReply(event, text)
-		if !passiveQueued {
+		if directBotFollowup {
+			// A direct reply to the bot should be assessed immediately. It still
+			// needs the semantic answerability gate, but must not wait behind
+			// unrelated passive chatter in the group batch.
+			r.cancelPassiveReplyBatch(event)
 			handled = r.shouldHandlePassiveReply(ctx, event, text)
+		} else {
+			passiveQueued = r.enqueuePassiveReply(event, text)
+			if !passiveQueued {
+				handled = r.shouldHandlePassiveReply(ctx, event, text)
+			}
 		}
 	}
 	evaluation, before, evaluated := r.evaluateRelationshipUpdate(ctx, event, text, handled)
@@ -1068,6 +1077,9 @@ func (r *Runtime) shouldHandleChat(event MessageEvent, text string) bool {
 	if r.isGroupDisabled(event.GroupID) {
 		return false
 	}
+	if eventRepliesToBot(event, cfg) {
+		return false
+	}
 	if eventDirectlyMentionsBot(event, cfg) {
 		return true
 	}
@@ -1178,7 +1190,7 @@ func (r *Runtime) routePassiveReplyBatch(ctx context.Context, candidates []passi
 	messages := []llm.Message{
 		{
 			Role:    llm.RoleSystem,
-			Content: strings.TrimSpace(cfg.PassiveReplyRouterPrompt),
+			Content: passiveReplyRouterSystemPrompt(cfg.PassiveReplyRouterPrompt),
 		},
 		routeUserMessage,
 	}
@@ -1198,7 +1210,7 @@ func (r *Runtime) routePassiveReplyBatch(ctx context.Context, candidates []passi
 	turn := selectPassiveReplyTurn(candidates, event.MessageID, decision.TurnMessageIDs)
 	decisionAllowed := parsed && decision.allows(cfg.PassiveReplyThreshold)
 	sampleAllowed := true
-	if decisionAllowed {
+	if decisionAllowed && !decision.qualifiedBotFollowup() {
 		sampleAllowed = passiveReplySampleAllows(event, text, cfg.PassiveReplyChance)
 	}
 	allowed := decisionAllowed && sampleAllowed
@@ -1419,6 +1431,10 @@ type passiveReplyDecision struct {
 	Reason          string   `json:"reason,omitempty"`
 }
 
+func (decision passiveReplyDecision) qualifiedBotFollowup() bool {
+	return strings.EqualFold(strings.TrimSpace(decision.Category), "bot_related") && decision.DirectedAtBot
+}
+
 func (decision passiveReplyDecision) allows(threshold float64) bool {
 	if !decision.ShouldReply || decision.Confidence < threshold || decision.Confidence > 1 {
 		return false
@@ -1427,10 +1443,19 @@ func (decision passiveReplyDecision) allows(threshold float64) bool {
 	case "needs_response":
 		return decision.Answerable
 	case "bot_related":
-		return decision.DirectedAtBot
+		return decision.DirectedAtBot && decision.Answerable
 	default:
 		return false
 	}
+}
+
+func passiveReplyRouterSystemPrompt(configured string) string {
+	const answerabilityGuard = `运行时强制约束：直接引用或语义承接机器人回复的追问属于 bot_related 候选；只要它确实需要继续回应，就应优先识别为 directed_at_bot=true。无论 category 是 bot_related 还是 needs_response，只有现有上下文、稳定知识、可用工具或公开检索能够支持具体可靠的回答时，answerable 才能为 true。缺少关键前提、只能猜测、回答可信度不足时必须 should_reply=false、answerable=false；不要用泛泛附和、编造答案或仅为追问而追问来代替可靠回答。`
+	configured = strings.TrimSpace(configured)
+	if configured == "" {
+		return answerabilityGuard
+	}
+	return configured + "\n\n" + answerabilityGuard
 }
 
 func parsePassiveReplyDecision(raw string) (passiveReplyDecision, bool) {

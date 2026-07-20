@@ -312,7 +312,8 @@ func (r *Runtime) botReplyLoopCandidate(event MessageEvent, text string) (botRep
 	if event.Kind != EventKindGroup || userID == "" || botID == "" || userID == botID || userID == strings.TrimSpace(cfg.OwnerID) || r.isGroupDisabled(event.GroupID) {
 		return botReplyLoopCandidate{}, false
 	}
-	if strings.TrimSpace(readableEventText(event, text)) == "" || !r.shouldHandleChat(event, text) {
+	directBotFollowup := eventRepliesToBot(event, cfg)
+	if strings.TrimSpace(readableEventText(event, text)) == "" || (!directBotFollowup && !r.shouldHandleChat(event, text)) {
 		return botReplyLoopCandidate{}, false
 	}
 	if r.shouldHandleResolver(event, text) {
