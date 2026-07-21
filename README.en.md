@@ -355,7 +355,10 @@ Diana forwards OneBot events received from NapCat to the NoneBot sidecar. When t
 | `QQBOT_ENABLED` | `false` | Enable the bot automatically on startup |
 | `ONEBOT_REVERSE_WS_ENDPOINT` | `ws://127.0.0.1:<PORT>/onebot/v11/ws` | Reverse WebSocket URL for NapCat |
 | `ONEBOT_ACCESS_TOKEN` | empty | OneBot access token |
-| `DIANA_TWITTER_RESOLVER_API` | empty | Optional HTTPS X/Twitter resolver; supports a `{url}` placeholder, otherwise yt-dlp is used |
+| `DIANA_TWITTER_RESOLVER_API` | empty | Optional preferred HTTPS X/Twitter resolver with a `{url}` placeholder; FxTwitter fills in complete text and ordered media when it is absent or returns only one direct URL, with yt-dlp retained as a fallback |
+| `DIANA_TWITTER_METADATA_API` | FxTwitter | Structured X/Twitter metadata endpoint; supports `{id}` or `{url}` placeholders and can point to a self-hosted compatible service |
+| `DIANA_TWITTER_MIN_GROUP_LEVEL` | `40` | Minimum QQ group level required to trigger X/Twitter resolution; the bot owner bypasses it and `0` disables the threshold |
+| `DIANA_RESOLVER_IMAGE_MAX_MB` | `25` | Maximum downloaded resolver image size in MB |
 | `DIANA_RESOLVER_VIDEO_MAX_MB` | `100` | Maximum downloaded and sent resolver video size in MB |
 | `DIANA_RESOLVER_VIDEO_MAX_DURATION` | `480` | Maximum accepted resolver video duration in seconds |
 | `DIANA_ALLOW_PRIVATE_HTTP_FETCHES` | `false` | Allow link/media plugins to access private network targets; enable only for trusted internal resources |

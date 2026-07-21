@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -469,8 +470,10 @@ func savedStateDisabled(states map[string]PluginState, id string) bool {
 }
 
 type ResolverPlugin struct {
-	client          *http.Client
-	videoDownloader func(context.Context, string) string
+	client                 *http.Client
+	videoDownloader        func(context.Context, string) string
+	twitterPostFetcher     func(context.Context, string) (twitterPost, bool)
+	twitterMediaDownloader func(context.Context, twitterMedia) string
 }
 
 // NewResolverPlugin 创建官方内置链接解析插件。
@@ -478,7 +481,7 @@ func NewResolverPlugin(client *http.Client) *ResolverPlugin {
 	if client == nil {
 		client = netguard.NewPublicHTTPClient(8 * time.Second)
 	}
-	return &ResolverPlugin{client: client, videoDownloader: downloadPlatformVideoFile}
+	return &ResolverPlugin{client: client}
 }
 
 // Manifest 返回链接解析插件清单。
@@ -505,7 +508,20 @@ func (p *ResolverPlugin) Handle(ctx context.Context, req PluginRequest) (*Plugin
 	forwardMessages := make([]OutgoingMessage, 0, len(urls)*2)
 	imageURLs := make([]string, 0)
 	videoURLs := make([]string, 0, 1)
+	blockedTwitter := false
+	twitterPermissionChecked := false
+	twitterAllowed := false
 	for _, raw := range urls {
+		if isTwitterURL(normalizeResolverURL(raw)) {
+			if !twitterPermissionChecked {
+				twitterAllowed = twitterResolverRequestAllowed(ctx, req)
+				twitterPermissionChecked = true
+			}
+			if !twitterAllowed {
+				blockedTwitter = true
+				continue
+			}
+		}
 		if isKnownResolverPlatformURL(raw) {
 			result := p.resolveKnownPlatform(ctx, req, raw)
 			if result.Context != "" {
@@ -522,6 +538,9 @@ func (p *ResolverPlugin) Handle(ctx context.Context, req PluginRequest) (*Plugin
 		}
 		info := resolveURL(ctx, p.client, raw)
 		parts = append(parts, info)
+	}
+	if blockedTwitter && len(nonEmptyStrings(append([]string(nil), parts...))) == 0 && len(forwardMessages) == 0 && len(imageURLs) == 0 && len(videoURLs) == 0 {
+		return nil, nil
 	}
 	contextText := strings.Join(nonEmptyStrings(parts), "\n")
 	if contextText == "" {
@@ -722,6 +741,76 @@ func (p *ResolverPlugin) resolveXiaohongshu(ctx context.Context, req PluginReque
 }
 
 func (p *ResolverPlugin) resolveTwitter(ctx context.Context, req PluginRequest, raw string) resolverPlatformResult {
+	if p.videoDownloader != nil && p.twitterPostFetcher == nil && p.twitterMediaDownloader == nil {
+		return p.resolveTwitterLegacy(ctx, req, raw)
+	}
+	fetchPost := p.twitterPostFetcher
+	if fetchPost == nil {
+		fetchPost = fetchTwitterPost
+	}
+	post, ok := fetchPost(ctx, raw)
+	if !ok {
+		return p.resolveTwitterLegacy(ctx, req, raw)
+	}
+	metaText := twitterMetaText(resolverNickname(), post)
+	nodes := []OutgoingMessage{{Text: metaText}}
+	if len(post.Media) == 0 {
+		return resolverPlatformResult{Context: metaText, ForwardMessages: nodes}
+	}
+
+	downloadMedia := p.twitterMediaDownloader
+	if downloadMedia == nil {
+		downloadMedia = downloadTwitterMediaFile
+	}
+	resolved := make([]string, len(post.Media))
+	var downloads sync.WaitGroup
+	for index := range post.Media {
+		index := index
+		downloads.Add(1)
+		go func() {
+			defer downloads.Done()
+			resolved[index] = downloadMedia(ctx, post.Media[index])
+		}()
+	}
+	downloads.Wait()
+
+	imageURLs := make([]string, 0, len(post.Media))
+	videoURLs := make([]string, 0, len(post.Media))
+	localImages := make([]string, 0, len(post.Media))
+	failed := 0
+	for index, media := range post.Media {
+		mediaPath := strings.TrimSpace(resolved[index])
+		if mediaPath == "" {
+			failed++
+			continue
+		}
+		if media.sendAsImage() {
+			imageURLs = append(imageURLs, mediaPath)
+			nodes = append(nodes, OutgoingMessage{ImageURLs: []string{mediaPath}})
+			if localPath := localMediaPath(mediaPath); localPath != "" {
+				if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+					localImages = append(localImages, localPath)
+				}
+			}
+			continue
+		}
+		videoURLs = append(videoURLs, mediaPath)
+		nodes = append(nodes, OutgoingMessage{VideoURLs: []string{mediaPath}})
+		recordResolverVideoLog(ctx, req, raw, mediaPath)
+	}
+	if failed > 0 {
+		nodes = append(nodes, OutgoingMessage{Text: fmt.Sprintf("有 %d 个媒体下载失败，未发送。", failed)})
+	}
+	cleanupLocalMediaFilesLater(localImages, resolverLocalMediaTTL)
+	return resolverPlatformResult{
+		Context:         metaText,
+		ImageURLs:       imageURLs,
+		VideoURLs:       videoURLs,
+		ForwardMessages: nodes,
+	}
+}
+
+func (p *ResolverPlugin) resolveTwitterLegacy(ctx context.Context, req PluginRequest, raw string) resolverPlatformResult {
 	nickname := resolverNickname()
 	metaText := fmt.Sprintf("%s识别：小蓝鸟学习版", nickname)
 	videoPath := p.downloadResolverVideo(ctx, req, raw)
@@ -871,11 +960,17 @@ func fetchTwitterMediaURL(ctx context.Context, raw string) string {
 }
 
 func resolverMediaURLIsImage(raw string) bool {
-	lower := strings.ToLower(strings.TrimSpace(raw))
-	return strings.HasSuffix(lower, ".jpg") ||
-		strings.HasSuffix(lower, ".jpeg") ||
-		strings.HasSuffix(lower, ".png") ||
-		strings.HasSuffix(lower, ".webp")
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	extension := strings.ToLower(filepath.Ext(parsed.Path))
+	switch extension {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func xiaohongshuMetaText(nickname string, note map[string]any) string {

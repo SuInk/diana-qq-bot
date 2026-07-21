@@ -2702,12 +2702,13 @@ func TestRuntimeResolverOnlySendsAndRecordsWithoutLLM(t *testing.T) {
 	runtime.SetAppLogWriter(logs)
 
 	event := MessageEvent{
-		Kind:       EventKindGroup,
-		SelfID:     "42",
-		GroupID:    "123456",
-		UserID:     "10001",
-		MessageID:  "link-1",
-		RawMessage: "看这个 https://x.com/example/status/1",
+		Kind:        EventKindGroup,
+		SelfID:      "42",
+		GroupID:     "123456",
+		UserID:      "10001",
+		MessageID:   "link-1",
+		SenderLevel: "LV40",
+		RawMessage:  "看这个 https://x.com/example/status/1",
 		Segments: []MessageSegment{
 			{Type: "text", Data: map[string]string{"text": "看这个 https://x.com/example/status/1"}},
 		},
@@ -2833,13 +2834,14 @@ func TestRuntimeResolverMentionedGroupLinkSkipsLLM(t *testing.T) {
 	})
 
 	event := MessageEvent{
-		Kind:       EventKindGroup,
-		SelfID:     "42",
-		GroupID:    "123456",
-		UserID:     "10001",
-		MessageID:  "mentioned-link-1",
-		ToMe:       true,
-		RawMessage: "[CQ:at,qq=42] 看这个 https://x.com/example/status/1",
+		Kind:        EventKindGroup,
+		SelfID:      "42",
+		GroupID:     "123456",
+		UserID:      "10001",
+		MessageID:   "mentioned-link-1",
+		SenderLevel: "LV40",
+		ToMe:        true,
+		RawMessage:  "[CQ:at,qq=42] 看这个 https://x.com/example/status/1",
 		Segments: []MessageSegment{
 			{Type: "at", Data: map[string]string{"qq": "42"}},
 			{Type: "text", Data: map[string]string{"text": " 看这个 https://x.com/example/status/1"}},

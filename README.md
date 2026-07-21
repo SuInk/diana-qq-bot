@@ -356,7 +356,10 @@ Diana 会把 NapCat 收到的 OneBot 事件转发给 NoneBot sidecar；第三方
 | `QQBOT_ENABLED` | `false` | 启动时是否自动启用机器人 |
 | `ONEBOT_REVERSE_WS_ENDPOINT` | `ws://127.0.0.1:<PORT>/onebot/v11/ws` | 给 NapCat 连接的反向 WebSocket 地址 |
 | `ONEBOT_ACCESS_TOKEN` | 必填 | OneBot access token；空值会拒绝反向 WebSocket 连接，建议使用至少 32 字符随机值 |
-| `DIANA_TWITTER_RESOLVER_API` | 空 | 可选的 X/Twitter HTTPS 解析服务地址；支持 `{url}` 占位符，留空时回退 yt-dlp |
+| `DIANA_TWITTER_RESOLVER_API` | 空 | 可选的 X/Twitter HTTPS 解析服务地址；支持 `{url}` 占位符，配置后优先使用；未配置或仅返回单直链时由 FxTwitter 补充完整文案与有序媒体，并保留 yt-dlp 回退 |
+| `DIANA_TWITTER_METADATA_API` | FxTwitter | X/Twitter 结构化元数据地址；支持 `{id}` 或 `{url}` 占位符，可替换为自建兼容服务 |
+| `DIANA_TWITTER_MIN_GROUP_LEVEL` | `40` | 群聊触发 X/Twitter 解析所需的最低群等级；机器人主人不受限制，设为 `0` 可关闭门槛 |
+| `DIANA_RESOLVER_IMAGE_MAX_MB` | `25` | 解析器下载的单张图片大小上限（MB） |
 | `DIANA_RESOLVER_VIDEO_MAX_MB` | `100` | 解析器下载和发送的单个视频大小上限（MB） |
 | `DIANA_RESOLVER_VIDEO_MAX_DURATION` | `480` | 解析器接受的视频时长上限（秒） |
 | `DIANA_ALLOW_PRIVATE_HTTP_FETCHES` | `false` | 是否允许链接/媒体插件访问私网地址；仅在明确需要可信内网资源时开启 |

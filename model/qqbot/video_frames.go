@@ -325,8 +325,7 @@ func downloadTwitterVideoFile(ctx context.Context, raw string) string {
 		return ""
 	}
 	mediaURL := strings.TrimSpace(resp.Data.URL)
-	lower := strings.ToLower(mediaURL)
-	if strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".png") || strings.HasSuffix(lower, ".webp") {
+	if resolverMediaURLIsImage(mediaURL) {
 		return ""
 	}
 	return downloadGenericVideoFile(ctx, mediaURL, resolverCommonHeaders())
